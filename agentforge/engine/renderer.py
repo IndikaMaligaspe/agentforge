@@ -20,13 +20,24 @@ like a single agent.
 from __future__ import annotations
 
 import importlib.resources
+import os
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Optional
 
-from jinja2 import Environment, PackageLoader, select_autoescape, StrictUndefined
+from jinja2 import (
+    Environment,
+    PackageLoader,
+    select_autoescape,
+    StrictUndefined,
+    TemplateNotFound,
+    UndefinedError
+)
+from rich.console import Console
 
 from ..schema.models import ProjectConfig, AgentConfig
 from .filters import snake_case, pascal_case, upper_snake
+
+console = Console()
 
 
 class TemplateRenderer:
@@ -142,8 +153,38 @@ class TemplateRenderer:
             TemplateNotFound: If the template doesn't exist
             UndefinedError: If the template references undefined variables
         """
-        tmpl = self._env.get_template(template_name)
-        return tmpl.render(**ctx)
+        # Validate template existence before attempting to render
+        template_path = os.path.join("templates", template_name)
+        if not self._template_exists(template_name):
+            console.print(f"[red]✗[/red] Template not found: {template_name}")
+            raise TemplateNotFound(template_name)
+        
+        try:
+            tmpl = self._env.get_template(template_name)
+            return tmpl.render(**ctx)
+        except UndefinedError as e:
+            console.print(f"[red]✗[/red] Template rendering error: {str(e)}")
+            console.print("[yellow]![/yellow] Missing variable in template. Check your project configuration.")
+            raise
+        except Exception as e:
+            console.print(f"[red]✗[/red] Unexpected error rendering template: {str(e)}")
+            raise
+    
+    def _template_exists(self, template_name: str) -> bool:
+        """
+        Check if a template exists in the templates directory.
+        
+        Args:
+            template_name: Name of the template file to check
+            
+        Returns:
+            True if the template exists, False otherwise
+        """
+        try:
+            self._env.get_template(template_name)
+            return True
+        except TemplateNotFound:
+            return False
 
     @staticmethod
     def _build_context(config: ProjectConfig) -> dict:
