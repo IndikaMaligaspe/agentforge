@@ -1,0 +1,135 @@
+{# README.md.j2 - Project README template #}
+# {{ project_name }}
+
+{{ description }}
+
+## Overview
+
+This project was scaffolded using [agentforge](https://github.com/code4zeero/agentforge), a tool for creating production-ready agentic applications.
+
+## Features
+
+- LangGraph-based workflow with supervisor orchestration
+- Multiple specialized agents for different query types
+- FastAPI backend with structured logging and observability
+{% if enable_auth %}- API key authentication{% endif %}
+{% if enable_tracing %}- Langfuse tracing integration{% endif %}
+{% if db_backend == "postgres" %}- PostgreSQL database integration{% elif db_backend == "mysql" %}- MySQL database integration{% elif db_backend == "sqlite" %}- SQLite database integration{% endif %}
+- Docker and Docker Compose support
+
+## Project Structure
+
+```
+{{ project_name }}/
+├── backend/
+│   ├── main.py                  # FastAPI application
+│   ├── mcp_server.py            # Model-Control-Protocol server
+│   │
+│   ├── agents/
+│   │   ├── base_agent.py        # Abstract base class for all agents
+│   │   ├── registry.py          # Agent registry with @register decorator
+{% for agent in agents_list %}
+│   │   └── {{ agent.key }}_agent.py      # {{ agent.class_name }}
+{% endfor %}
+│   │
+│   ├── graph/
+│   │   ├── workflow.py          # LangGraph workflow definition
+│   │   ├── state.py             # State type definitions
+│   │   └── nodes/               # LangGraph node implementations
+│   │       ├── query_router_node.py
+│   │       ├── supervisor_node.py
+│   │       └── answer_node.py
+│   │
+│   ├── observability/
+│   │   ├── logging.py           # Structured JSON logging
+{% if enable_tracing %}│   │   └── tracing.py           # Langfuse tracing integration{% endif %}
+│   │
+{% if enable_auth %}│   ├── security/
+│   │   ├── auth.py              # API key authentication
+│   │   └── sanitizer.py         # Input sanitization utilities
+│   │
+{% endif %}│   └── middleware/
+│       └── logging_middleware.py # Request/response logging
+│
+├── .env.example                 # Environment variables template
+├── requirements.txt             # Python dependencies
+├── Dockerfile                   # Container definition
+└── docker-compose.yml           # Multi-container setup
+```
+
+## Getting Started
+
+### Prerequisites
+
+- Python {{ python_version }} or higher
+- {% if db_backend == "postgres" %}PostgreSQL{% elif db_backend == "mysql" %}MySQL{% elif db_backend == "sqlite" %}SQLite{% endif %} database
+- OpenAI API key
+
+### Installation
+
+1. Clone the repository:
+   ```bash
+   git clone https://github.com/yourusername/{{ project_name }}.git
+   cd {{ project_name }}
+   ```
+
+2. Create a virtual environment:
+   ```bash
+   python -m venv venv
+   source venv/bin/activate  # On Windows: venv\Scripts\activate
+   ```
+
+3. Install dependencies:
+   ```bash
+   pip install -r requirements.txt
+   ```
+
+4. Set up environment variables:
+   ```bash
+   cp .env.example .env
+   # Edit .env with your configuration
+   ```
+
+### Running the Application
+
+Start the API server:
+
+```bash
+uvicorn backend.main:app --reload
+```
+
+The API will be available at http://localhost:8000
+
+### Docker Deployment
+
+Build and run with Docker Compose:
+
+```bash
+docker-compose up -d
+```
+
+## API Endpoints
+
+{% for endpoint in api.endpoints %}
+- `POST {{ endpoint }}`: Main query endpoint
+{% endfor %}
+
+## Development
+
+### Adding a New Agent
+
+1. Create a new agent file in `backend/agents/`
+2. Implement the agent class extending `BaseAgent`
+3. Register the agent with `@AgentRegistry.register("intent_key")`
+4. Update the query router to recognize the new intent
+
+## License
+
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## Acknowledgments
+
+- [agentforge](https://github.com/code4zeero/agentforge) - Scaffolding tool
+- [LangChain](https://github.com/langchain-ai/langchain) - LLM framework
+- [LangGraph](https://github.com/langchain-ai/langgraph) - Agent orchestration
+- [FastAPI](https://fastapi.tiangolo.com/) - API framework

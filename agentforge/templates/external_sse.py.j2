@@ -1,0 +1,158 @@
+{# external_sse.py.j2 - MCP SSE client using langchain_mcp_adapters #}
+"""
+MCP Server implementation using Server-Sent Events (SSE) for external LLM tool calls.
+This module provides a client for connecting to an external MCP server via SSE.
+"""
+from typing import Any, Dict, List, Optional
+import os
+import json
+import time
+import logging
+from dotenv import load_dotenv
+from langchain_mcp_adapters import MCPSSEClient
+from observability.logging import get_logger, log_with_props, log_execution_time, RequestContext
+
+# Initialize logger
+logger = get_logger(__name__)
+
+load_dotenv()
+
+class ExternalMCPServer:
+    """
+    A client for connecting to an external MCP server via Server-Sent Events (SSE).
+    This implementation uses langchain_mcp_adapters to handle the SSE connection.
+    """
+
+    def __init__(self):
+        """Initialize the MCP SSE client."""
+        logger.info("Initializing ExternalMCPServer")
+        self.client = self._init_client()
+
+    # ------------------------------------------------------------------
+    # Internal helpers
+    # ------------------------------------------------------------------
+
+    def _init_client(self) -> Optional[MCPSSEClient]:
+        """
+        Create an MCPSSEClient instance to connect to the external MCP server.
+        """
+        mcp_url = os.getenv('MCP_SERVER_URL')
+        mcp_api_key = os.getenv('MCP_API_KEY')
+        
+        if not mcp_url:
+            logger.error("MCP_SERVER_URL environment variable not set")
+            return None
+            
+        log_with_props(logger, "info", "Creating MCP SSE client",
+                      url=mcp_url)
+
+        try:
+            client = MCPSSEClient(
+                base_url=mcp_url,
+                api_key=mcp_api_key,
+                timeout=30
+            )
+            log_with_props(logger, "info", "MCP SSE client created successfully")
+            return client
+        except Exception as e:
+            log_with_props(logger, "error", "Failed to create MCP SSE client",
+                          error=str(e))
+            return None
+
+    # ------------------------------------------------------------------
+    # Public MCP tools
+    # ------------------------------------------------------------------
+{% for table in db_tables %}
+    def query_{{ table | snake_case }}(self, query: str) -> Dict[str, Any]:
+        """
+        MCP Tool: Executes a query against the {{ table }} table.
+        Returns: {success:bool, data:list, error:str}
+        """
+        request_id = RequestContext.get_request_id()
+        
+        log_with_props(logger, "info", "Executing {{ table }} query",
+                      query_preview=query[:150] + "..." if len(query) > 150 else query,
+                      query_length=len(query),
+                      request_id=request_id)
+                      
+        if self.client is None:
+            log_with_props(logger, "error", "MCP client not initialized",
+                          request_id=request_id)
+            return {"success": False, "data": None, 
+                    "error": "MCP client not initialized"}
+        
+        start_time = time.time()
+        try:
+            # Call the external MCP server
+            response = self.client.execute_tool(
+                tool_name="query_{{ table | snake_case }}",
+                tool_input={"query": query}
+            )
+            
+            execution_time = time.time() - start_time
+            log_with_props(logger, "info", "{{ table }} query executed successfully",
+                          execution_time_ms=round(execution_time * 1000, 2),
+                          request_id=request_id)
+            
+            return response
+        except Exception as e:
+            execution_time = time.time() - start_time
+            log_with_props(logger, "error", "Error executing {{ table }} query",
+                          error=str(e),
+                          execution_time_ms=round(execution_time * 1000, 2),
+                          request_id=request_id)
+            
+            return {
+                "success": False,
+                "data": None,
+                "error": str(e)
+            }
+{% endfor %}
+
+    def get_schema(self, table_name: str = None) -> Dict[str, Any]:
+        """
+        MCP Tool: Retrieves the schema of the specified table or all tables.
+        Returns: {success:bool, schema:dict, error:str}
+        """
+        request_id = RequestContext.get_request_id()
+        
+        log_with_props(logger, "info", "Retrieving database schema",
+                      table=table_name if table_name else "ALL",
+                      request_id=request_id)
+                      
+        if self.client is None:
+            log_with_props(logger, "error", "MCP client not initialized",
+                          request_id=request_id)
+            return {"success": False, "error": "MCP client not initialized"}
+        
+        start_time = time.time()
+        try:
+            # Call the external MCP server
+            response = self.client.execute_tool(
+                tool_name="get_schema",
+                tool_input={"table_name": table_name} if table_name else {}
+            )
+            
+            execution_time = time.time() - start_time
+            log_with_props(logger, "info", "Schema retrieved successfully",
+                          table=table_name if table_name else "ALL",
+                          execution_time_ms=round(execution_time * 1000, 2),
+                          request_id=request_id)
+            
+            return response
+        except Exception as e:
+            execution_time = time.time() - start_time
+            log_with_props(logger, "error", "Error retrieving database schema",
+                          table=table_name if table_name else "ALL",
+                          error=str(e),
+                          execution_time_ms=round(execution_time * 1000, 2),
+                          request_id=request_id)
+            
+            return {
+                "success": False,
+                "error": str(e)
+            }
+
+
+# Singleton instance of the MCP server
+mcp_server = ExternalMCPServer()

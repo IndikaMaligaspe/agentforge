@@ -1,0 +1,313 @@
+{# logging.py.j2 - Centralized logging configuration #}
+"""
+Centralized logging configuration module for {{ project_name }} application.
+
+This module provides standardized logging functionality including:
+- JSON-formatted structured logging
+- Request ID tracking and correlation
+- Log rotation and retention policies
+- Performance metric logging utilities
+- Environment-specific log level configuration
+"""
+import json
+import logging
+import sys
+import time
+import uuid
+from contextvars import ContextVar
+from logging.handlers import RotatingFileHandler
+from datetime import datetime
+import os
+from contextlib import contextmanager
+from typing import Optional, Dict, Any, Generator, Callable
+
+# Configure environment-based log levels
+LOG_LEVELS = {
+    "development": logging.DEBUG,
+    "testing": logging.DEBUG,
+    "staging": logging.INFO,
+    "production": logging.WARNING
+}
+
+# Get environment or default to development
+ENV = os.getenv("ENVIRONMENT", "development")
+DEFAULT_LOG_LEVEL = LOG_LEVELS.get(ENV, logging.INFO)
+
+# ---------------------------------------------------------------------------
+# Per-request context storage using contextvars
+#
+# contextvars.ContextVar provides per-task isolated storage that is
+# automatically inherited by child tasks and reset when a task completes,
+# making it safe for asyncio + ThreadPoolExecutor workloads.
+# ---------------------------------------------------------------------------
+_request_id_ctx: ContextVar[Optional[str]] = ContextVar("request_id", default=None)
+{% for field in context_fields %}
+_{{ field }}_ctx: ContextVar[Optional[str]] = ContextVar("{{ field }}", default=None)
+{% endfor %}
+# Use a tuple (immutable) as default to prevent shared mutable state bugs
+_additional_context_ctx: ContextVar[Dict[str, Any]] = ContextVar(
+    "additional_context", default={}
+)
+
+
+class RequestContext:
+    """
+    Per-request context backed by ``contextvars.ContextVar``.
+
+    Each async task (HTTP request) has its own isolated copy of all values.
+    Concurrent requests cannot read or overwrite each other's context,
+    eliminating cross-request data-leakage.
+    """
+
+    @classmethod
+    def set_request_id(cls, request_id: Optional[str] = None) -> str:
+        """Set the current request ID or generate a new UUID.
+
+        Returns:
+            The request ID that was set.
+        """
+        rid = request_id or str(uuid.uuid4())
+        _request_id_ctx.set(rid)
+        return rid
+
+    @classmethod
+    def get_request_id(cls) -> Optional[str]:
+        """Return the current task's request ID."""
+        return _request_id_ctx.get()
+
+{% for field in context_fields %}
+{% if field != "request_id" %}
+    @classmethod
+    def set_{{ field }}(cls, {{ field }}: str) -> None:
+        """Store the current {{ field }} in this task's context."""
+        _{{ field }}_ctx.set({{ field }})
+
+    @classmethod
+    def get_{{ field }}(cls) -> Optional[str]:
+        """Return the current task's {{ field }}."""
+        return _{{ field }}_ctx.get()
+{% endif %}
+{% endfor %}
+
+    @classmethod
+    def add_context(cls, key: str, value: Any) -> None:
+        """Add a key-value pair to the additional context dictionary.
+
+        Creates a *new* dict on every write so that the ContextVar holds
+        an immutable snapshot — preventing accidental mutation of the
+        shared default ``{}`` object across tasks.
+        """
+        current = _additional_context_ctx.get()
+        _additional_context_ctx.set({**current, key: value})
+
+    @classmethod
+    def get_context(cls, key: str) -> Any:
+        """Retrieve a value from the additional context by key."""
+        return _additional_context_ctx.get().get(key)
+
+    @classmethod
+    def get_all_context(cls) -> Dict[str, Any]:
+        """Return a merged snapshot of all context data for this task."""
+        context: Dict[str, Any] = dict(_additional_context_ctx.get())
+        request_id = _request_id_ctx.get()
+        if request_id:
+            context["request_id"] = request_id
+        
+        {% for field in context_fields %}
+        {% if field != "request_id" %}
+        {{ field }} = _{{ field }}_ctx.get()
+        if {{ field }}:
+            context["{{ field }}"] = {{ field }}
+        {% endif %}
+        {% endfor %}
+        
+        return context
+
+    @classmethod
+    def clear(cls) -> None:
+        """Reset all context values for the current task."""
+        _request_id_ctx.set(None)
+        {% for field in context_fields %}
+        {% if field != "request_id" %}
+        _{{ field }}_ctx.set(None)
+        {% endif %}
+        {% endfor %}
+        _additional_context_ctx.set({})
+
+
+# Custom JSON Formatter
+class JsonFormatter(logging.Formatter):
+    """
+    Custom formatter that outputs log records as JSON objects.
+    Includes timestamps, context information, and any additional properties.
+    """
+    def format(self, record):
+        """
+        Format the log record as a JSON object.
+        
+        Args:
+            record: The log record to format
+            
+        Returns:
+            JSON string representation of the log record
+        """
+        log_record = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "level": record.levelname,
+            "logger": record.name,
+            "message": record.getMessage(),
+            "module": record.module,
+            "function": record.funcName,
+            "line": record.lineno,
+        }
+        
+        # Add request context if available
+        request_context = RequestContext.get_all_context()
+        if request_context:
+            log_record.update(request_context)
+            
+        # Add exception info if available
+        if record.exc_info:
+            log_record["exception"] = self.formatException(record.exc_info)
+            
+        # Add extra fields from record
+        if hasattr(record, 'props'):
+            log_record.update(record.props)
+            
+        return json.dumps(log_record)
+
+
+# Context manager for timing operations
+@contextmanager
+def log_execution_time(logger, operation_name: str) -> Generator[None, None, None]:
+    """
+    Context manager that logs the execution time of an operation.
+    
+    Args:
+        logger: Logger instance to use
+        operation_name: Name of the operation being timed
+        
+    Yields:
+        None
+        
+    Example:
+        ```
+        logger = get_logger(__name__)
+        with log_execution_time(logger, "database_query"):
+            result = execute_query(...)
+        ```
+    """
+    start_time = time.time()
+    try:
+        yield
+    finally:
+        execution_time = time.time() - start_time
+        logger.info(
+            f"Operation {operation_name} completed",
+            extra={"props": {"operation": operation_name, "execution_time_ms": round(execution_time * 1000, 2)}}
+        )
+
+
+def get_logger(name: str, log_level: Optional[int] = None) -> logging.Logger:
+    """
+    Get a configured logger instance.
+    
+    Args:
+        name: Name for the logger, typically __name__ of the calling module
+        log_level: Optional override for log level
+        
+    Returns:
+        Configured logger instance
+    """
+    logger = logging.getLogger(name)
+    
+    # If logger already has handlers, return it to avoid duplicate handlers
+    if logger.handlers:
+        return logger
+        
+    # Set log level from param or default 
+    logger.setLevel(log_level or DEFAULT_LOG_LEVEL)
+    
+    # Console handler with JSON formatter
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(JsonFormatter())
+    logger.addHandler(console_handler)
+    
+    # File handler with rotation
+    log_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    
+    file_handler = RotatingFileHandler(
+        os.path.join(log_dir, "{{ project_name }}.log"),
+        maxBytes={{ log_rotation_bytes }},  # {{ log_rotation_bytes // 1048576 }}MB
+        backupCount={{ log_backup_count }}
+    )
+    file_handler.setFormatter(JsonFormatter())
+    logger.addHandler(file_handler)
+    
+    return logger
+
+
+def log_with_props(logger, level: str, message: str, **props):
+    """
+    Log a message with additional properties that get included in the JSON output.
+    
+    Args:
+        logger: Logger instance
+        level: Log level (debug, info, warning, error, critical)
+        message: Log message
+        props: Additional properties to include in the log
+    """
+    log_method = getattr(logger, level.lower())
+    log_method(message, extra={"props": props})
+
+
+# Function decorator for logging function calls
+def log_function_call(logger=None):
+    """
+    Decorator that logs function entry and exit with timing information.
+    
+    Args:
+        logger: Logger instance to use (if None, will use the module's logger)
+        
+    Returns:
+        Decorated function
+        
+    Example:
+        ```
+        @log_function_call(logger)
+        def process_data(data):
+            # function body
+        ```
+    """
+    def decorator(func: Callable):
+        # If logger not provided, get one based on the function's module
+        nonlocal logger
+        if logger is None:
+            logger = get_logger(func.__module__)
+            
+        def wrapper(*args, **kwargs):
+            func_name = func.__name__
+            logger.debug(f"Entering function: {func_name}")
+            start_time = time.time()
+            
+            try:
+                result = func(*args, **kwargs)
+                execution_time = time.time() - start_time
+                logger.debug(
+                    f"Exiting function: {func_name}",
+                    extra={"props": {"function": func_name, "execution_time_ms": round(execution_time * 1000, 2)}}
+                )
+                return result
+            except Exception as e:
+                execution_time = time.time() - start_time
+                logger.error(
+                    f"Exception in function: {func_name} - {str(e)}",
+                    extra={"props": {"function": func_name, "execution_time_ms": round(execution_time * 1000, 2)}},
+                    exc_info=True
+                )
+                raise
+                
+        return wrapper
+    
+    return decorator

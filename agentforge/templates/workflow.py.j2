@@ -1,0 +1,102 @@
+{# workflow.py.j2 - LangGraph workflow with supervisor pattern #}
+"""
+workflow.py — Supervisor-based workflow with compile-once pattern.
+
+This module defines a LangGraph StateGraph that orchestrates the agent workflow.
+"""
+
+from langgraph.graph import StateGraph, END
+from typing import Dict, Any
+from .state import AgentState
+from .nodes import (
+    query_router_node, supervisor_node,
+    {% if enable_validation_node %}validation_node, {% endif %}answer_node,
+    {% if enable_feedback_loop %}feedback_node, improve_answer_node, error_end_node,
+    feedback_router, MAX_FEEDBACK_ATTEMPTS,{% endif %}
+)
+from observability.logging import get_logger
+import agents  # ensure all @register_agent decorators execute
+
+logger = get_logger(__name__)
+
+def _build_graph() -> StateGraph:
+    """
+    Build the workflow graph with supervisor_node.
+    
+    This function creates a LangGraph workflow with the following components:
+    - query_router: Classifies queries as {% for intent in valid_intents %}'{{ intent }}'{% if not loop.last %}, {% endif %}{% endfor %}
+    - supervisor: Dispatches to the appropriate agent based on intent
+    {% if enable_validation_node %}- validator: Validates agent results (conditional){% endif %}
+    - answer: Formats the final answer
+    {% if enable_feedback_loop %}- feedback: Evaluates answer quality
+    - improve_answer: Improves low-quality answers
+    - error_end: Handles persistent low-quality answers{% endif %}
+    
+    Returns:
+        Compiled LangGraph workflow
+    """
+    graph = StateGraph(AgentState)
+
+    # Add nodes
+    graph.add_node("query_router", query_router_node)
+    graph.add_node("supervisor", supervisor_node)
+    {% if enable_validation_node %}graph.add_node("validator", validation_node){% endif %}
+    graph.add_node("answer", answer_node)
+    {% if enable_feedback_loop %}
+    graph.add_node("feedback", feedback_node)
+    graph.add_node("improve_answer", improve_answer_node)
+    graph.add_node("error_end", error_end_node)
+    {% endif %}
+
+    # Set entry point
+    graph.set_entry_point("query_router")
+
+    # query_router → supervisor (all intents go here; supervisor dispatches internally)
+    graph.add_edge("query_router", "supervisor")
+
+    {% if enable_validation_node %}
+    # supervisor → validator OR answer based on needs_validation flag
+    graph.add_conditional_edges(
+        "supervisor",
+        lambda state: "validator" if state.get("needs_validation") else "answer",
+        {"validator": "validator", "answer": "answer"},
+    )
+
+    # Validator → answer
+    graph.add_edge("validator", "answer")
+    {% else %}
+    # supervisor → answer (direct path without validation)
+    graph.add_edge("supervisor", "answer")
+    {% endif %}
+
+    {% if enable_feedback_loop %}
+    # Answer → feedback
+    graph.add_edge("answer", "feedback")
+
+    # Feedback conditional edges
+    graph.add_conditional_edges(
+        "feedback",
+        feedback_router,
+        {"accept": END, "improve": "improve_answer", "fail": "error_end"},
+    )
+
+    graph.add_edge("improve_answer", "feedback")
+    graph.add_edge("error_end", END)
+    {% else %}
+    # Answer → END (no feedback loop)
+    graph.add_edge("answer", END)
+    {% endif %}
+
+    return graph
+
+
+# ── Compile once at module load ──────────────────────────────────────────────
+# Risk 2 Mitigation: do NOT attach CallbackHandler() here.
+# Pass it at invoke time via config={"callbacks": [CallbackHandler()]}.
+_COMPILED_GRAPH = _build_graph().compile()
+logger.info("workflow: graph compiled and cached at startup")
+
+
+def get_workflow():
+    """Return the module-level singleton compiled graph."""
+    return _COMPILED_GRAPH

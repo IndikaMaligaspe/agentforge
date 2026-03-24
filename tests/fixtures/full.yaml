@@ -1,0 +1,86 @@
+metadata:
+  name: full_featured_project
+  description: A comprehensive agentic project with all features enabled
+  python_version: "3.11"
+  author: Test Author
+  email: test@example.com
+
+agents:
+  - key: sql
+    class_name: SQLAgent
+    llm_model: gpt-4o
+    system_prompt: |
+      You are a SQL expert that helps users query databases.
+      Always validate SQL queries before executing them.
+    tools:
+      - name: execute_sql
+        description: Run a SQL query against the database
+        mcp_resource: execute_sql
+      - name: describe_table
+        description: Get the schema of a database table
+        mcp_resource: describe_table
+    needs_validation: true
+    extra_return_keys: ["query", "execution_time"]
+
+  - key: analytics
+    class_name: AnalyticsAgent
+    llm_model: claude-3-5-sonnet-20241022
+    system_prompt: |
+      You are an analytics assistant that helps users analyze data.
+      Focus on providing insights and visualizations.
+    tools:
+      - name: generate_chart
+        description: Generate a chart from data
+        mcp_resource: generate_chart
+      - name: run_analysis
+        description: Run statistical analysis on data
+        mcp_resource: run_analysis
+    needs_validation: false
+
+database:
+  backend: postgres
+  tables:
+    - users
+    - orders
+    - products
+    - categories
+  connection_env_var: DATABASE_URL
+  pool_size: 10
+  max_overflow: 20
+
+workflow:
+  enable_feedback_loop: true
+  enable_validation_node: true
+  router_llm_model: gpt-4o-mini
+  default_intent: sql
+  max_feedback_attempts: 5
+
+api:
+  title: Full Featured API
+  query_max_length: 5000
+  endpoints:
+    - /query
+    - /analyze
+    - /visualize
+  cors:
+    origins:
+      - "http://localhost:3000"
+      - "https://app.example.com"
+    allow_credentials: true
+
+observability:
+  enable_tracing: true
+  tracing_provider: langfuse
+  context_fields:
+    - request_id
+    - user_id
+    - session_id
+    - tenant_id
+    - trace_id
+  log_rotation_bytes: 20971520 # 20 MB
+  log_backup_count: 10
+
+security:
+  enable_auth: true
+  api_key_env_var: API_SECRET_KEY
+  enable_ip_pseudonymization: true

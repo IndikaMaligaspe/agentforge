@@ -1,0 +1,34 @@
+metadata:
+  name: minimal_project
+  description: A minimal valid project
+  python_version: "3.11"
+  author: Test Author
+  email: test@example.com
+
+agents:
+  - key: sql
+    class_name: SQLAgent
+    llm_model: gpt-4o-mini
+    system_prompt: You are a SQL assistant.
+
+database:
+  backend: postgres
+  tables: []
+
+workflow:
+  enable_feedback_loop: true
+  enable_validation_node: true
+  default_intent: sql
+  max_feedback_attempts: 3
+
+api:
+  title: Minimal API
+  query_max_length: 2000
+  cors:
+    origins: ["*"]
+
+observability:
+  enable_tracing: false
+
+security:
+  enable_auth: false

@@ -1,0 +1,212 @@
+"""
+Jinja2-based template rendering engine.
+
+This module is responsible for rendering Jinja2 templates using the project
+configuration as context. It transforms the abstract configuration into concrete
+code files that make up the scaffolded project.
+
+Key features:
+- Templates are loaded from the package-internal `templates/` directory
+  (installed alongside the wheel; accessed via importlib.resources)
+- A single Jinja2 Environment is constructed once; all renders share it
+- Custom filters are registered: `snake_case`, `pascal_case`, `upper_snake`
+- Template context is always a flat dict built from a ProjectConfig instance
+- Supports rendering the entire project or individual components
+
+The TemplateRenderer class is the main entry point for template rendering operations.
+It provides methods to render all templates for a project or just specific components
+like a single agent.
+"""
+from __future__ import annotations
+
+import importlib.resources
+from pathlib import Path
+from typing import Iterator
+
+from jinja2 import Environment, PackageLoader, select_autoescape, StrictUndefined
+
+from ..schema.models import ProjectConfig, AgentConfig
+from .filters import snake_case, pascal_case, upper_snake
+
+
+class TemplateRenderer:
+    """
+    Renders Jinja2 templates using ProjectConfig as the render context.
+    
+    This class is responsible for transforming the project configuration into
+    actual code files by rendering Jinja2 templates. It maintains a single
+    Jinja2 Environment instance with custom filters and configuration.
+    
+    The renderer handles both static templates (rendered once per project)
+    and dynamic templates (rendered for each agent or component).
+    """
+
+    def __init__(self) -> None:
+        self._env = Environment(
+            loader=PackageLoader("agentforge", "templates"),
+            autoescape=select_autoescape([]),   # Python code — no HTML escaping
+            undefined=StrictUndefined,          # fail fast on missing variables
+            trim_blocks=True,
+            lstrip_blocks=True,
+        )
+        # Register custom filters
+        self._env.filters["snake_case"]  = snake_case
+        self._env.filters["pascal_case"] = pascal_case
+        self._env.filters["upper_snake"] = upper_snake
+
+    # ── Public API ────────────────────────────────────────────────────────────
+
+    def render_all(self, config: ProjectConfig) -> list[tuple[Path, str]]:
+        """
+        Render every template for the given project configuration.
+        
+        This method renders all templates needed for a complete project scaffold,
+        including both static templates (rendered once per project) and dynamic
+        templates (rendered for each agent).
+        
+        Args:
+            config: The validated ProjectConfig containing all project settings
+            
+        Returns:
+            A list of (relative_path, rendered_content) tuples in the order they
+            should be written to disk. The relative paths are from the project root.
+            
+        Example:
+            ```python
+            renderer = TemplateRenderer()
+            files = renderer.render_all(project_config)
+            for path, content in files:
+                # Write content to path
+            ```
+        """
+        ctx = self._build_context(config)
+        results: list[tuple[Path, str]] = []
+
+        # Static (per-project) templates
+        for tmpl_name, rel_path in STATIC_TEMPLATE_MAP:
+            content = self._render(tmpl_name, ctx)
+            results.append((Path(rel_path), content))
+
+        # Dynamic (per-agent) templates
+        for agent in config.agents:
+            agent_ctx = {**ctx, "agent": agent.model_dump()}
+            content = self._render("agent.py.j2", agent_ctx)
+            results.append((Path(f"backend/agents/{agent.key}_agent.py"), content))
+
+        return results
+
+    def render_agent(
+        self, agent: AgentConfig, config: ProjectConfig
+    ) -> list[tuple[Path, str]]:
+        """
+        Render only the files needed for a single new agent.
+        
+        This method is used when adding a new agent to an existing project.
+        It renders the agent-specific file and updates the registry file
+        to include the new agent.
+        
+        Args:
+            agent: The AgentConfig for the new agent to render
+            config: The complete ProjectConfig for context
+            
+        Returns:
+            A list of (relative_path, rendered_content) tuples for the
+            agent file and updated registry file
+        """
+        ctx = self._build_context(config)
+        agent_ctx = {**ctx, "agent": agent.model_dump()}
+
+        results = []
+        # The agent module itself
+        content = self._render("agent.py.j2", agent_ctx)
+        results.append((Path(f"backend/agents/{agent.key}_agent.py"), content))
+        # Re-render registry.py to include the new agent
+        content = self._render("registry.py.j2", ctx)
+        results.append((Path("backend/agents/registry.py"), content))
+        return results
+
+    # ── Internal helpers ──────────────────────────────────────────────────────
+
+    def _render(self, template_name: str, ctx: dict) -> str:
+        """
+        Render a single template with the given context.
+        
+        Args:
+            template_name: Name of the template file (e.g., "agent.py.j2")
+            ctx: Context dictionary with variables for the template
+            
+        Returns:
+            The rendered template content as a string
+            
+        Raises:
+            TemplateNotFound: If the template doesn't exist
+            UndefinedError: If the template references undefined variables
+        """
+        tmpl = self._env.get_template(template_name)
+        return tmpl.render(**ctx)
+
+    @staticmethod
+    def _build_context(config: ProjectConfig) -> dict:
+        """
+        Flatten ProjectConfig into a Jinja2 context dictionary.
+
+        This method converts the hierarchical Pydantic model into a flat
+        dictionary that can be used as a context for Jinja2 templates.
+        It serializes all nested models to plain dicts/lists and adds
+        convenience aliases for commonly used values to simplify template code.
+        
+        Args:
+            config: The ProjectConfig to convert to a template context
+            
+        Returns:
+            A dictionary with all configuration values and convenience aliases
+            ready to be used in Jinja2 templates
+            
+        Note:
+            The returned dictionary includes both the full serialized config
+            and shortcut aliases for frequently accessed values to make
+            templates more readable.
+        """
+        data = config.model_dump(mode="python")
+        # Convenience aliases used heavily in templates
+        data["project_name"]            = config.metadata.name
+        data["agents_list"]             = [a.model_dump() for a in config.agents]
+        data["agent_keys"]              = [a.key for a in config.agents]
+        data["valid_intents"]           = [a.key for a in config.agents]
+        data["default_intent"]          = config.workflow.default_intent
+        data["enable_feedback_loop"]    = config.workflow.enable_feedback_loop
+        data["enable_validation_node"]  = config.workflow.enable_validation_node
+        data["enable_tracing"]          = config.observability.enable_tracing
+        data["enable_auth"]             = config.security.enable_auth
+        data["api_key_env_var"]         = config.security.api_key_env_var
+        data["cors_origins"]            = [str(o) for o in config.api.cors.origins]
+        data["query_max_length"]        = config.api.query_max_length
+        data["db_backend"]              = config.database.backend.value
+        data["db_tables"]               = config.database.tables
+        data["context_fields"]          = config.observability.context_fields
+        return data
+
+
+# ── Template → output file mapping (static, one-per-project templates) ───────
+STATIC_TEMPLATE_MAP: list[tuple[str, str]] = [
+    ("base_agent.py.j2",            "backend/agents/base_agent.py"),
+    ("registry.py.j2",              "backend/agents/registry.py"),
+    ("state.py.j2",                 "backend/graph/state.py"),
+    ("workflow.py.j2",              "backend/graph/workflow.py"),
+    ("query_router_node.py.j2",     "backend/graph/nodes/query_router_node.py"),
+    ("supervisor_node.py.j2",       "backend/graph/nodes/supervisor_node.py"),
+    ("answer_node.py.j2",           "backend/graph/nodes/answer_node.py"),
+    ("validation_node.py.j2",       "backend/graph/nodes/validation_node.py"),
+    ("feedback_node.py.j2",         "backend/graph/nodes/feedback_node.py"),
+    ("mcp_server.py.j2",            "backend/mcp_server.py"),
+    ("main.py.j2",                  "backend/main.py"),
+    ("logging.py.j2",               "backend/observability/logging.py"),
+    ("tracing.py.j2",               "backend/observability/tracing.py"),
+    ("auth.py.j2",                  "backend/security/auth.py"),
+    ("sanitizer.py.j2",             "backend/security/sanitizer.py"),
+    ("logging_middleware.py.j2",    "backend/middleware/logging_middleware.py"),
+    ("requirements.txt.j2",         "requirements.txt"),
+    ("env.j2",                      ".env.example"),
+    ("README.md.j2",                "README.md"),
+    ("gitignore.j2",                ".gitignore"),
+]

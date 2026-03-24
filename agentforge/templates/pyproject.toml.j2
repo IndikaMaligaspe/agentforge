@@ -1,0 +1,67 @@
+{# pyproject.toml.j2 - Python project configuration #}
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "{{ project_name }}"
+version = "0.1.0"
+description = "{{ description }}"
+readme = "README.md"
+requires-python = ">={{ python_version }}"
+license = {text = "MIT"}
+authors = [
+  {name = "{{ author }}", email = "{{ email }}"}
+]
+keywords = ["agents", "langchain", "langgraph", "llm"]
+classifiers = [
+  "Development Status :: 3 - Alpha",
+  "Intended Audience :: Developers",
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: {{ python_version }}",
+]
+dependencies = [
+  "fastapi>=0.110",
+  "uvicorn[standard]>=0.29",
+  "pydantic>=2.7",
+  "langgraph>=0.1",
+  "langchain-openai>=0.1",
+  {% if db_backend == "postgres" %}
+  "psycopg2-binary>=2.9",
+  {% elif db_backend == "mysql" %}
+  "mysql-connector-python>=8.4",
+  {% elif db_backend == "sqlite" %}
+  "sqlalchemy>=2.0",
+  {% elif db_backend == "bigquery" %}
+  "google-cloud-bigquery>=3.20",
+  {% endif %}
+  {% if enable_tracing %}
+  "langfuse>=2.35",
+  {% endif %}
+  "python-dotenv>=1.0",
+  "rich>=13.7",
+]
+
+[project.scripts]
+{{ project_name }} = "backend.main:app"
+
+[tool.hatch.build.targets.wheel]
+packages = ["backend"]
+
+[tool.hatch.envs.default]
+dependencies = [
+  "pytest>=8",
+  "pytest-cov",
+  "ruff",
+  "mypy",
+]
+
+[tool.hatch.envs.default.scripts]
+test = "pytest tests/ -v --cov=backend --cov-report=term-missing"
+lint = "ruff check backend/"
+typecheck = "mypy backend/ --ignore-missing-imports"
+fmt = "ruff format backend/"
+
+[tool.ruff]
+line-length = 100
+target-version = "py{{ python_version }}"

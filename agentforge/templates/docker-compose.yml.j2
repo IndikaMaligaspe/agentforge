@@ -1,0 +1,72 @@
+{# docker-compose.yml.j2 - Docker Compose configuration for the project #}
+version: '3.8'
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - ENVIRONMENT=production
+      {% if db_backend == "postgres" %}
+      - DATABASE_URL=${DATABASE_URL}
+      {% elif db_backend == "mysql" %}
+      - MYSQL_HOST=db
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+      {% endif %}
+      {% if enable_auth %}
+      - {{ api_key_env_var }}=${{{ api_key_env_var }}}
+      {% endif %}
+      {% if enable_tracing %}
+      - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}
+      - LANGFUSE_SECRET_KEY=${LANGFUSE_SECRET_KEY}
+      - LANGFUSE_HOST=${LANGFUSE_HOST}
+      {% endif %}
+      - OPENAI_API_KEY=${OPENAI_API_KEY}
+    volumes:
+      - ./logs:/app/logs
+    {% if db_backend == "postgres" or db_backend == "mysql" %}
+    depends_on:
+      - db
+    {% endif %}
+    restart: unless-stopped
+
+  {% if db_backend == "postgres" %}
+  db:
+    image: postgres:15-alpine
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - POSTGRES_DB=${POSTGRES_DB}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    restart: unless-stopped
+  {% elif db_backend == "mysql" %}
+  db:
+    image: mysql:8
+    environment:
+      - MYSQL_ROOT_PASSWORD=${MYSQL_ROOT_PASSWORD}
+      - MYSQL_USER=${MYSQL_USER}
+      - MYSQL_PASSWORD=${MYSQL_PASSWORD}
+      - MYSQL_DATABASE=${MYSQL_DATABASE}
+    volumes:
+      - mysql_data:/var/lib/mysql
+    ports:
+      - "3306:3306"
+    restart: unless-stopped
+  {% endif %}
+
+{% if db_backend == "postgres" or db_backend == "mysql" %}
+volumes:
+  {% if db_backend == "postgres" %}
+  postgres_data:
+  {% elif db_backend == "mysql" %}
+  mysql_data:
+  {% endif %}
+{% endif %}
