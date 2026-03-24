@@ -1,0 +1,43 @@
+# Core dependencies
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.7.0
+python-dotenv>=1.0.0
+
+# LangChain and LangGraph
+langchain>=0.1.0
+langchain-core>=0.1.0
+langgraph>=0.0.20
+
+# LLM providers
+openai>=1.12.0
+{% if observability.tracing_provider == "langfuse" %}
+langfuse>=2.0.0
+{% endif %}
+
+# Database drivers
+{% if db_backend == "postgres" %}
+asyncpg>=0.29.0
+{% elif db_backend == "mysql" %}
+aiomysql>=0.2.0
+{% elif db_backend == "sqlite" %}
+aiosqlite>=0.19.0
+{% elif db_backend == "mssql" %}
+aioodbc>=0.4.0
+pyodbc>=5.0.0
+{% elif db_backend == "bigquery" %}
+google-cloud-bigquery>=3.14.0
+{% endif %}
+
+# Observability
+structlog>=24.1.0
+python-json-logger>=2.0.7
+
+# Security
+python-multipart>=0.0.7
+cryptography>=42.0.0
+
+# Development tools
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+httpx>=0.26.0

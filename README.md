@@ -252,20 +252,35 @@ hatch run fmt
 
 The following improvements have been made to enhance the reliability and functionality of AgentForge:
 
-1. **Package Structure**: Updated the package structure to use `src/agentforge` layout for better compatibility with modern Python packaging practices.
+1. **Complete Template Library**: Added all required Jinja2 templates for full project scaffolding:
+   - `state.py.j2` — LangGraph `AgentState` TypedDict
+   - `feedback_node.py.j2` — Feedback loop node with configurable max attempts
+   - `validation_node.py.j2` — Validation node for agent response safety checks
+   - `mcp_server.py.j2` — Database connection pool singleton (supports postgres, mysql, sqlite, mssql, bigquery)
+   - `requirements.txt.j2` — Dependency file with conditional DB drivers and tracing libraries
+   - `env.j2` — `.env.example` with all required environment variables
+   - `gitignore.j2` — Standard Python `.gitignore`
 
-2. **Template Rendering Error Handling**: Added robust error handling for template rendering:
+2. **Template Context Enhancements**: The renderer now exposes comprehensive flat aliases alongside nested config dicts:
+   - All `metadata.*` fields: `project_name`, `description`, `python_version`, `author`, `author_email`
+   - All `workflow.*` fields: `default_intent`, `enable_feedback_loop`, `enable_validation_node`, `router_llm_model`, `max_feedback_attempts`
+   - All `database.*` fields: `db_backend`, `db_tables`, `db_connection_env_var`, `db_pool_size`
+   - All `observability.*` fields: `enable_tracing`, `tracing_provider`, `context_fields`, `log_rotation_bytes`, `log_backup_count`
+   - All `security.*` fields: `enable_auth`, `api_key_env_var`, `enable_ip_pseudonymization`
+   - All `api.*` fields: `cors_origins`, `query_max_length`, `allow_credentials`
+
+3. **Template Rendering Error Handling**: Added robust error handling for template rendering:
    - Validation of template existence before rendering
    - Explicit handling of undefined variables in templates
    - Detailed error messages for troubleshooting
 
-3. **GitHub CLI Integration**: Enhanced GitHub integration with:
+4. **GitHub CLI Integration**: Enhanced GitHub integration with:
    - Validation of GitHub CLI installation
    - Authentication status checking
    - Improved error handling for repository operations
    - Detailed error messages for failed operations
 
-4. **Comprehensive Test Suite**: Added tests for:
+5. **Comprehensive Test Suite**: Added tests for:
    - Interactive wizard functionality
    - GitHub CLI integration
    - End-to-end integration tests

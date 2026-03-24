@@ -1,0 +1,176 @@
+"""
+Database connection pool manager.
+
+This module provides a singleton connection pool for database access.
+It handles connection pooling, reconnection, and query execution.
+"""
+import os
+import logging
+from typing import Any, Dict, List, Optional, Union
+
+{% if db_backend == "postgres" %}
+import asyncpg
+{% elif db_backend == "mysql" %}
+import aiomysql
+{% elif db_backend == "sqlite" %}
+import aiosqlite
+{% elif db_backend == "mssql" %}
+import aioodbc
+{% elif db_backend == "bigquery" %}
+from google.cloud import bigquery
+{% endif %}
+
+from .observability.logging import get_logger
+
+logger = get_logger(__name__)
+
+
+class MCPServer:
+    """
+    Model-Connection-Pool Server for database access.
+    
+    This class manages a connection pool to the database and provides
+    methods for executing queries. It's implemented as a singleton
+    to ensure a single connection pool is shared across the application.
+    """
+    _instance = None
+    _pool = None
+    
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super(MCPServer, cls).__new__(cls)
+            cls._instance._initialized = False
+        return cls._instance
+    
+    async def initialize(self):
+        """Initialize the connection pool if not already initialized."""
+        if self._initialized:
+            return
+        
+        connection_string = os.getenv("{{ db_connection_env_var }}")
+        if not connection_string:
+            logger.error(f"Environment variable {{ db_connection_env_var }} not set")
+            raise ValueError(f"Environment variable {{ db_connection_env_var }} not set")
+        
+        try:
+            {% if db_backend == "postgres" %}
+            self._pool = await asyncpg.create_pool(
+                connection_string,
+                min_size=1,
+                max_size={{ db_pool_size }},
+            )
+            {% elif db_backend == "mysql" %}
+            self._pool = await aiomysql.create_pool(
+                connection_string,
+                minsize=1,
+                maxsize={{ db_pool_size }},
+            )
+            {% elif db_backend == "sqlite" %}
+            # SQLite doesn't use connection pooling in the same way
+            self._pool = {"connection_string": connection_string}
+            {% elif db_backend == "mssql" %}
+            self._pool = await aioodbc.create_pool(
+                dsn=connection_string,
+                minsize=1,
+                maxsize={{ db_pool_size }},
+            )
+            {% elif db_backend == "bigquery" %}
+            # BigQuery uses a client rather than a connection pool
+            self._pool = bigquery.Client()
+            {% endif %}
+            
+            logger.info(f"Database connection pool initialized ({{ db_backend }})")
+            self._initialized = True
+        except Exception as e:
+            logger.error(f"Failed to initialize database connection pool: {str(e)}")
+            raise
+    
+    async def execute_query(self, query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+        """
+        Execute a SQL query and return the results.
+        
+        Args:
+            query: SQL query to execute
+            params: Query parameters (optional)
+            
+        Returns:
+            List of dictionaries representing the query results
+        """
+        if not self._initialized:
+            await self.initialize()
+        
+        if params is None:
+            params = {}
+        
+        try:
+            {% if db_backend == "postgres" %}
+            async with self._pool.acquire() as conn:
+                result = await conn.fetch(query, *params.values())
+                return [dict(row) for row in result]
+            {% elif db_backend == "mysql" %}
+            async with self._pool.acquire() as conn:
+                async with conn.cursor(aiomysql.DictCursor) as cur:
+                    await cur.execute(query, params)
+                    result = await cur.fetchall()
+                    return list(result)
+            {% elif db_backend == "sqlite" %}
+            async with aiosqlite.connect(self._pool["connection_string"]) as conn:
+                conn.row_factory = lambda cursor, row: {
+                    col[0]: row[idx] for idx, col in enumerate(cursor.description)
+                }
+                async with conn.execute(query, list(params.values())) as cur:
+                    result = await cur.fetchall()
+                    return list(result)
+            {% elif db_backend == "mssql" %}
+            async with self._pool.acquire() as conn:
+                async with conn.cursor() as cur:
+                    await cur.execute(query, params)
+                    columns = [column[0] for column in cur.description]
+                    result = await cur.fetchall()
+                    return [dict(zip(columns, row)) for row in result]
+            {% elif db_backend == "bigquery" %}
+            query_job = self._pool.query(query, job_config=bigquery.QueryJobConfig(
+                query_parameters=[
+                    bigquery.ScalarQueryParameter(k, "STRING", v)
+                    for k, v in params.items()
+                ]
+            ))
+            result = query_job.result()
+            return [dict(row) for row in result]
+            {% endif %}
+        except Exception as e:
+            logger.error(f"Query execution failed: {str(e)}")
+            logger.error(f"Query: {query}")
+            logger.error(f"Params: {params}")
+            raise
+    
+    async def close(self):
+        """Close the connection pool."""
+        if self._initialized and self._pool:
+            {% if db_backend == "postgres" or db_backend == "mysql" or db_backend == "mssql" %}
+            await self._pool.close()
+            {% elif db_backend == "bigquery" %}
+            self._pool.close()
+            {% endif %}
+            self._initialized = False
+            logger.info("Database connection pool closed")
+
+
+# Singleton instance
+mcp_server = MCPServer()
+
+
+async def execute_sql(query: str, params: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    """
+    Execute a SQL query and return the results.
+    
+    This is a convenience function that uses the MCPServer singleton.
+    
+    Args:
+        query: SQL query to execute
+        params: Query parameters (optional)
+        
+    Returns:
+        List of dictionaries representing the query results
+    """
+    return await mcp_server.execute_query(query, params)

@@ -1,0 +1,86 @@
+"""
+Feedback node for the agent workflow graph.
+
+This node handles user feedback on agent responses and routes the feedback
+to the appropriate agent for improvement.
+"""
+from typing import Annotated, Any, Dict, List, Literal, Optional, TypedDict, Union
+
+from langchain.schema import HumanMessage, SystemMessage
+from langgraph.graph import StateGraph
+
+from ..agents.registry import get_agent_by_key
+from .state import AgentState
+
+
+async def feedback_node(state: AgentState) -> AgentState:
+    """
+    Process user feedback and generate an improved response.
+    
+    This node is triggered when a user provides feedback on an agent's response.
+    It sends the original query, the agent's response, and the user's feedback
+    to the agent to generate an improved response.
+    
+    Args:
+        state: The current workflow state
+        
+    Returns:
+        Updated state with improved_response field
+    """
+    # Extract relevant information from state
+    query = state.get("query", "")
+    agent_response = state.get("agent_response", "")
+    feedback = state.get("feedback", "")
+    intent = state.get("intent", "{{ default_intent }}")
+    attempt_count = state.get("attempt_count", 0)
+    
+    # Increment attempt counter
+    state["attempt_count"] = attempt_count + 1
+    
+    # Get the agent that generated the original response
+    agent = get_agent_by_key(intent)
+    
+    # Create a prompt that includes the original query, response, and feedback
+    feedback_prompt = f"""
+    Original query: {query}
+    
+    Your previous response: {agent_response}
+    
+    User feedback: {feedback}
+    
+    Please provide an improved response that addresses the user's feedback.
+    """
+    
+    # Get improved response from the agent
+    improved_response = await agent.generate_response(
+        query=feedback_prompt,
+        context=state.get("context", {})
+    )
+    
+    # Update state with improved response
+    state["improved_response"] = improved_response
+    
+    return state
+
+
+def should_process_feedback(state: AgentState) -> Literal["feedback", "complete"]:
+    """
+    Determine whether to process feedback or complete the workflow.
+    
+    This conditional router checks if:
+    1. User provided feedback
+    2. We haven't exceeded the maximum feedback attempts
+    
+    Args:
+        state: The current workflow state
+        
+    Returns:
+        "feedback" if feedback should be processed, "complete" otherwise
+    """
+    feedback = state.get("feedback")
+    attempt_count = state.get("attempt_count", 0)
+    
+    if feedback and attempt_count < {{ max_feedback_attempts }}:
+        return "feedback"
+    else:
+        return "complete"

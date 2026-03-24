@@ -210,21 +210,40 @@ class TemplateRenderer:
         """
         data = config.model_dump(mode="python")
         # Convenience aliases used heavily in templates
-        data["project_name"]            = config.metadata.name
-        data["agents_list"]             = [a.model_dump() for a in config.agents]
-        data["agent_keys"]              = [a.key for a in config.agents]
-        data["valid_intents"]           = [a.key for a in config.agents]
-        data["default_intent"]          = config.workflow.default_intent
-        data["enable_feedback_loop"]    = config.workflow.enable_feedback_loop
-        data["enable_validation_node"]  = config.workflow.enable_validation_node
-        data["enable_tracing"]          = config.observability.enable_tracing
-        data["enable_auth"]             = config.security.enable_auth
-        data["api_key_env_var"]         = config.security.api_key_env_var
-        data["cors_origins"]            = [str(o) for o in config.api.cors.origins]
-        data["query_max_length"]        = config.api.query_max_length
-        data["db_backend"]              = config.database.backend.value
-        data["db_tables"]               = config.database.tables
-        data["context_fields"]          = config.observability.context_fields
+        # Metadata aliases
+        data["project_name"]                = config.metadata.name
+        data["description"]                 = config.metadata.description
+        data["python_version"]              = config.metadata.python_version
+        data["author"]                      = config.metadata.author
+        data["author_email"]                = config.metadata.email
+        data["agents_list"]                 = [a.model_dump() for a in config.agents]
+        data["agent_keys"]                  = [a.key for a in config.agents]
+        data["valid_intents"]               = [a.key for a in config.agents]
+        # Workflow aliases
+        data["default_intent"]              = config.workflow.default_intent
+        data["enable_feedback_loop"]        = config.workflow.enable_feedback_loop
+        data["enable_validation_node"]      = config.workflow.enable_validation_node
+        data["router_llm_model"]            = config.workflow.router_llm_model.value
+        data["max_feedback_attempts"]       = config.workflow.max_feedback_attempts
+        # Observability aliases
+        data["enable_tracing"]              = config.observability.enable_tracing
+        data["tracing_provider"]            = config.observability.tracing_provider
+        data["context_fields"]              = config.observability.context_fields
+        data["log_rotation_bytes"]          = config.observability.log_rotation_bytes
+        data["log_backup_count"]            = config.observability.log_backup_count
+        # Security aliases
+        data["enable_auth"]                 = config.security.enable_auth
+        data["api_key_env_var"]             = config.security.api_key_env_var
+        data["enable_ip_pseudonymization"]  = config.security.enable_ip_pseudonymization
+        # API aliases
+        data["cors_origins"]                = [str(o) for o in config.api.cors.origins]
+        data["query_max_length"]            = config.api.query_max_length
+        data["allow_credentials"]           = config.api.cors.allow_credentials
+        # Database aliases
+        data["db_backend"]                  = config.database.backend.value
+        data["db_tables"]                   = config.database.tables
+        data["db_connection_env_var"]       = config.database.connection_env_var
+        data["db_pool_size"]                = config.database.pool_size
         return data
 
 
