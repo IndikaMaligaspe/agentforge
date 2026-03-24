@@ -6,6 +6,8 @@ A CLI tool for scaffolding production-grade agentic Python projects.
 
 AgentForge extracts proven patterns from production agent systems and parameterizes them through a declarative YAML config (`project.yaml`) and an interactive terminal wizard. It helps you quickly bootstrap new agentic projects with best practices baked in.
 
+This tool was created entirely using agentic engineering tools and references the architecture patterns from [multi-agent-chat-with-data](https://github.com/IndikaMaligaspe/multi-agent-chat-with-data), a production-grade implementation of a multi-agent system with data access capabilities.
+
 ## Features
 
 - Zero boilerplate for new agentic projects
@@ -266,6 +268,24 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 3. Commit your changes (`git commit -m 'Add some amazing feature'`)
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
+
+## Tips and Best Practices
+
+Here are some helpful tips for getting the most out of AgentForge:
+
+1. **Start with a clear agent design**: Before scaffolding, define the responsibilities and capabilities of each agent in your system.
+
+2. **Use the validation node**: For agents that produce potentially risky outputs (like SQL queries or code), enable the `needs_validation` flag.
+
+3. **Customize system prompts**: Each agent can have a tailored system prompt that defines its personality and capabilities.
+
+4. **Leverage the feedback loop**: The built-in feedback mechanism allows agents to improve their responses based on user feedback.
+
+5. **Extend with custom tools**: Add domain-specific tools to your agents by implementing them in the agent files and registering them.
+
+6. **Version your project.yaml**: Keep your project.yaml in version control to track changes to your agent system configuration.
+
+7. **Start small, then expand**: Begin with a single agent, then gradually add more specialized agents as your system grows.
 
 ## License
 
