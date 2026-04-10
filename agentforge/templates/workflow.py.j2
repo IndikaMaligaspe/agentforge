@@ -40,7 +40,9 @@ def _build_graph() -> StateGraph:
     # Add nodes
     graph.add_node("query_router", query_router_node)
     graph.add_node("supervisor", supervisor_node)
-    {% if enable_validation_node %}graph.add_node("validator", validation_node){% endif %}
+    {% if enable_validation_node %}
+    graph.add_node("validator", validation_node)
+    {% endif %}
     graph.add_node("answer", answer_node)
     {% if enable_feedback_loop %}
     graph.add_node("feedback", feedback_node)

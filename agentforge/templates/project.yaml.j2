@@ -53,6 +53,7 @@ workflow:
   router_llm_model: {{ router_llm_model }}
   default_intent: {{ default_intent }}
   max_feedback_attempts: {{ max_feedback_attempts }}
+  # router_llm_provider: openai  # "openai" or "anthropic" — selects the LLM in query_router_node.py
 
 api:
   title: {{ api.title }}
@@ -77,8 +78,11 @@ observability:
     {% endfor %}
   log_rotation_bytes: {{ log_rotation_bytes }}
   log_backup_count: {{ log_backup_count }}
+  # structured_logging: false  # Set true to generate structlog-based JSON logging in backend/observability/logging.py
 
 security:
   enable_auth: {{ enable_auth }}
   api_key_env_var: {{ api_key_env_var }}
   enable_ip_pseudonymization: {{ enable_ip_pseudonymization }}
+
+# enable_provider_registry: false  # Set true to generate backend/config/provider_registry.py and providers.yaml

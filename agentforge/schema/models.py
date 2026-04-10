@@ -21,6 +21,7 @@ Each model includes field-level validation and documentation.
 """
 from __future__ import annotations
 
+import warnings
 from enum import Enum
 from typing import Annotated, Literal
 from pydantic import (
@@ -34,7 +35,7 @@ from pydantic import (
 class DBBackend(str, Enum):
     """
     Supported database backends for the scaffolded project.
-    
+
     These values determine which database-specific code is generated
     in the mcp_server.py template and which dependencies are added
     to requirements.txt.
@@ -48,7 +49,7 @@ class DBBackend(str, Enum):
 class LLMModel(str, Enum):
     """
     Supported LLM models for agents and router nodes.
-    
+
     These model identifiers are used directly in the LangChain
     ChatOpenAI constructor and must match the provider's API.
     """
@@ -111,16 +112,16 @@ class AgentConfig(BaseModel):
     def key_not_reserved(cls, v: str) -> str:
         """
         Validate that the agent key is not a reserved name.
-        
+
         Reserved names are used for core components of the scaffolded project
         and cannot be used as agent keys to avoid naming conflicts.
-        
+
         Args:
             v: The agent key to validate
-            
+
         Returns:
             The validated agent key
-            
+
         Raises:
             ValueError: If the key is in the reserved set
         """
@@ -156,11 +157,41 @@ class WorkflowConfig(BaseModel):
         LLMModel.GPT4O_MINI,
         description="Fast model used in query_router_node classification",
     )
+    router_llm_provider: Literal["openai", "anthropic"] = Field(
+        "openai",
+        description="LLM provider used in query_router_node classification.",
+    )
     default_intent: str = Field(
         "sql",
         description="Fallback intent when router cannot classify query",
     )
     max_feedback_attempts: int = Field(3, ge=1, le=10)
+
+    @model_validator(mode="after")
+    def warn_provider_model_mismatch(self) -> "WorkflowConfig":
+        """
+        Warn when router_llm_provider and router_llm_model look mismatched.
+
+        Mixing is legal — a user might intentionally test a cross-provider
+        combination — so we only warn, never raise.
+        """
+        model_val = self.router_llm_model.value
+        provider = self.router_llm_provider
+        if provider == "anthropic" and model_val.startswith("gpt-"):
+            warnings.warn(
+                f"router_llm_provider is 'anthropic' but router_llm_model is '{model_val}' "
+                f"(a GPT model). This is likely a misconfiguration.",
+                UserWarning,
+                stacklevel=2,
+            )
+        elif provider == "openai" and model_val.startswith("claude-"):
+            warnings.warn(
+                f"router_llm_provider is 'openai' but router_llm_model is '{model_val}' "
+                f"(a Claude model). This is likely a misconfiguration.",
+                UserWarning,
+                stacklevel=2,
+            )
+        return self
 
 
 class CORSConfig(BaseModel):
@@ -189,6 +220,10 @@ class ObservabilityConfig(BaseModel):
     )
     log_rotation_bytes: int = Field(10_485_760, description="10 MB default")
     log_backup_count: int = Field(5)
+    structured_logging: bool = Field(
+        False,
+        description="Use structlog for JSON logging in the scaffolded project.",
+    )
 
 
 class SecurityConfig(BaseModel):
@@ -239,6 +274,7 @@ class ProjectConfig(BaseModel):
       enable_feedback_loop: true
       enable_validation_node: true
       default_intent: sql
+      router_llm_provider: openai   # default; set "anthropic" to use ChatAnthropic
 
     api:
       title: My Agentic API
@@ -248,10 +284,13 @@ class ProjectConfig(BaseModel):
 
     observability:
       enable_tracing: true
+      structured_logging: false     # default; set true to use structlog JSON logging
 
     security:
       enable_auth: true
       api_key_env_var: MY_API_KEY
+
+    enable_provider_registry: false  # default; set true to generate backend/config/provider_registry.py
     """
     metadata: ProjectMetadata
     agents: list[AgentConfig] = Field(..., min_length=1)
@@ -260,19 +299,23 @@ class ProjectConfig(BaseModel):
     api: APIConfig = Field(default_factory=APIConfig)
     observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
     security: SecurityConfig = Field(default_factory=SecurityConfig)
+    enable_provider_registry: bool = Field(
+        False,
+        description="Generate backend/config/provider_registry.py in the scaffolded project.",
+    )
 
     @model_validator(mode="after")
     def check_default_intent_registered(self) -> "ProjectConfig":
         """
         Validate that the default intent is registered as an agent key.
-        
+
         This ensures that the workflow's default_intent refers to an actual agent
         that exists in the project configuration. Without this validation, the
         router node might default to a non-existent agent.
-        
+
         Returns:
             The validated ProjectConfig instance
-            
+
         Raises:
             ValueError: If the default_intent is not in the list of agent keys
         """
@@ -288,14 +331,14 @@ class ProjectConfig(BaseModel):
     def check_validation_node_consistency(self) -> "ProjectConfig":
         """
         Ensure validation node configuration is consistent with agent requirements.
-        
+
         If any agent has needs_validation=True, the workflow must have
         enable_validation_node=True. This prevents a configuration where an agent
         expects validation but the validation node is disabled in the workflow.
-        
+
         Returns:
             The validated ProjectConfig instance
-            
+
         Raises:
             ValueError: If any agent needs validation but the validation node is disabled
         """

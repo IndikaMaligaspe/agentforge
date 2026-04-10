@@ -22,7 +22,7 @@ from __future__ import annotations
 import importlib.resources
 import os
 from pathlib import Path
-from typing import Iterator, Optional
+from typing import Callable, Iterator, Optional, Union
 
 from jinja2 import (
     Environment,
@@ -39,15 +39,34 @@ from .filters import snake_case, pascal_case, upper_snake
 
 console = Console()
 
+# Type alias for entries in STATIC_TEMPLATE_MAP.  Four supported shapes:
+#   (str, str)                              — always renders
+#   (str, str, Callable[[ProjectConfig], bool])  — renders only if predicate is true
+#   (Callable[[ProjectConfig], str], str)   — template name resolved at render time (swap)
+#   (Callable[[ProjectConfig], str], str, Callable[[ProjectConfig], bool])  — swap + predicate
+TemplateMapEntry = Union[
+    tuple[str, str],
+    tuple[str, str, Callable[[ProjectConfig], bool]],
+    tuple[Callable[[ProjectConfig], str], str],
+    tuple[Callable[[ProjectConfig], str], str, Callable[[ProjectConfig], bool]],
+]
+
+
+def _resolve_logging_template(config: ProjectConfig) -> str:
+    """Swap between the stdlib and structlog logging templates based on flag."""
+    if config.observability.structured_logging:
+        return "logging_structlog.py.j2"
+    return "logging.py.j2"
+
 
 class TemplateRenderer:
     """
     Renders Jinja2 templates using ProjectConfig as the render context.
-    
+
     This class is responsible for transforming the project configuration into
     actual code files by rendering Jinja2 templates. It maintains a single
     Jinja2 Environment instance with custom filters and configuration.
-    
+
     The renderer handles both static templates (rendered once per project)
     and dynamic templates (rendered for each agent or component).
     """
@@ -70,18 +89,18 @@ class TemplateRenderer:
     def render_all(self, config: ProjectConfig) -> list[tuple[Path, str]]:
         """
         Render every template for the given project configuration.
-        
+
         This method renders all templates needed for a complete project scaffold,
         including both static templates (rendered once per project) and dynamic
         templates (rendered for each agent).
-        
+
         Args:
             config: The validated ProjectConfig containing all project settings
-            
+
         Returns:
             A list of (relative_path, rendered_content) tuples in the order they
             should be written to disk. The relative paths are from the project root.
-            
+
         Example:
             ```python
             renderer = TemplateRenderer()
@@ -94,7 +113,14 @@ class TemplateRenderer:
         results: list[tuple[Path, str]] = []
 
         # Static (per-project) templates
-        for tmpl_name, rel_path in STATIC_TEMPLATE_MAP:
+        for entry in STATIC_TEMPLATE_MAP:
+            # Resolve template name: literal string or callable that returns one.
+            tmpl_name = entry[0](config) if callable(entry[0]) else entry[0]
+            rel_path = entry[1]
+            # Evaluate optional predicate (3-tuple); skip this entry if it returns False.
+            predicate = entry[2] if len(entry) == 3 else None
+            if predicate is not None and not predicate(config):
+                continue
             content = self._render(tmpl_name, ctx)
             results.append((Path(rel_path), content))
 
@@ -111,15 +137,15 @@ class TemplateRenderer:
     ) -> list[tuple[Path, str]]:
         """
         Render only the files needed for a single new agent.
-        
+
         This method is used when adding a new agent to an existing project.
         It renders the agent-specific file and updates the registry file
         to include the new agent.
-        
+
         Args:
             agent: The AgentConfig for the new agent to render
             config: The complete ProjectConfig for context
-            
+
         Returns:
             A list of (relative_path, rendered_content) tuples for the
             agent file and updated registry file
@@ -141,14 +167,14 @@ class TemplateRenderer:
     def _render(self, template_name: str, ctx: dict) -> str:
         """
         Render a single template with the given context.
-        
+
         Args:
             template_name: Name of the template file (e.g., "agent.py.j2")
             ctx: Context dictionary with variables for the template
-            
+
         Returns:
             The rendered template content as a string
-            
+
         Raises:
             TemplateNotFound: If the template doesn't exist
             UndefinedError: If the template references undefined variables
@@ -158,7 +184,7 @@ class TemplateRenderer:
         if not self._template_exists(template_name):
             console.print(f"[red]✗[/red] Template not found: {template_name}")
             raise TemplateNotFound(template_name)
-        
+
         try:
             tmpl = self._env.get_template(template_name)
             return tmpl.render(**ctx)
@@ -169,14 +195,14 @@ class TemplateRenderer:
         except Exception as e:
             console.print(f"[red]✗[/red] Unexpected error rendering template: {str(e)}")
             raise
-    
+
     def _template_exists(self, template_name: str) -> bool:
         """
         Check if a template exists in the templates directory.
-        
+
         Args:
             template_name: Name of the template file to check
-            
+
         Returns:
             True if the template exists, False otherwise
         """
@@ -195,14 +221,14 @@ class TemplateRenderer:
         dictionary that can be used as a context for Jinja2 templates.
         It serializes all nested models to plain dicts/lists and adds
         convenience aliases for commonly used values to simplify template code.
-        
+
         Args:
             config: The ProjectConfig to convert to a template context
-            
+
         Returns:
             A dictionary with all configuration values and convenience aliases
             ready to be used in Jinja2 templates
-            
+
         Note:
             The returned dictionary includes both the full serialized config
             and shortcut aliases for frequently accessed values to make
@@ -224,6 +250,7 @@ class TemplateRenderer:
         data["enable_feedback_loop"]        = config.workflow.enable_feedback_loop
         data["enable_validation_node"]      = config.workflow.enable_validation_node
         data["router_llm_model"]            = config.workflow.router_llm_model.value
+        data["router_llm_provider"]         = config.workflow.router_llm_provider
         data["max_feedback_attempts"]       = config.workflow.max_feedback_attempts
         # Observability aliases
         data["enable_tracing"]              = config.observability.enable_tracing
@@ -231,6 +258,7 @@ class TemplateRenderer:
         data["context_fields"]              = config.observability.context_fields
         data["log_rotation_bytes"]          = config.observability.log_rotation_bytes
         data["log_backup_count"]            = config.observability.log_backup_count
+        data["structured_logging"]           = config.observability.structured_logging
         # Security aliases
         data["enable_auth"]                 = config.security.enable_auth
         data["api_key_env_var"]             = config.security.api_key_env_var
@@ -244,11 +272,18 @@ class TemplateRenderer:
         data["db_tables"]                   = config.database.tables
         data["db_connection_env_var"]       = config.database.connection_env_var
         data["db_pool_size"]                = config.database.pool_size
+        # Top-level feature flags
+        data["enable_provider_registry"]    = config.enable_provider_registry
         return data
 
 
 # ── Template → output file mapping (static, one-per-project templates) ───────
-STATIC_TEMPLATE_MAP: list[tuple[str, str]] = [
+# Each entry is a TemplateMapEntry (see type alias above). Supported shapes:
+#   (str, str)                          — always renders
+#   (str, str, predicate)               — renders only when predicate(config) is True
+#   (resolver, str)                     — template name resolved via resolver(config) at render time
+#   (resolver, str, predicate)          — combined swap + conditional
+STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
     ("base_agent.py.j2",            "backend/agents/base_agent.py"),
     ("registry.py.j2",              "backend/agents/registry.py"),
     ("state.py.j2",                 "backend/graph/state.py"),
@@ -260,13 +295,19 @@ STATIC_TEMPLATE_MAP: list[tuple[str, str]] = [
     ("feedback_node.py.j2",         "backend/graph/nodes/feedback_node.py"),
     ("mcp_server.py.j2",            "backend/mcp_server.py"),
     ("main.py.j2",                  "backend/main.py"),
-    ("logging.py.j2",               "backend/observability/logging.py"),
+    (_resolve_logging_template,     "backend/observability/logging.py"),
     ("tracing.py.j2",               "backend/observability/tracing.py"),
     ("auth.py.j2",                  "backend/security/auth.py"),
     ("sanitizer.py.j2",             "backend/security/sanitizer.py"),
     ("logging_middleware.py.j2",    "backend/middleware/logging_middleware.py"),
+    ("test_structlog_setup.py.j2",   "backend/tests/test_structlog_setup.py",
+     lambda c: c.observability.structured_logging),
     ("requirements.txt.j2",         "requirements.txt"),
     ("env.j2",                      ".env.example"),
     ("README.md.j2",                "README.md"),
     ("gitignore.j2",                ".gitignore"),
+    ("provider_registry.py.j2",     "backend/config/provider_registry.py",
+     lambda c: c.enable_provider_registry),
+    ("providers.yaml.j2",           "backend/config/providers.yaml",
+     lambda c: c.enable_provider_registry),
 ]

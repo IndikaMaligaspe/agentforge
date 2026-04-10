@@ -11,6 +11,9 @@ langgraph>=0.0.20
 
 # LLM providers
 openai>=1.12.0
+{% if router_llm_provider == "anthropic" %}
+langchain-anthropic>=0.1.0,<0.4.0
+{% endif %}
 {% if observability.tracing_provider == "langfuse" %}
 langfuse>=2.0.0
 {% endif %}

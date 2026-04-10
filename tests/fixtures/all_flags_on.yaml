@@ -51,8 +51,8 @@ database:
 workflow:
   enable_feedback_loop: true
   enable_validation_node: true
-  router_llm_model: gpt-4o-mini
-  router_llm_provider: openai
+  router_llm_model: claude-3-haiku-20240307
+  router_llm_provider: anthropic
   default_intent: sql
   max_feedback_attempts: 5
 
@@ -80,11 +80,11 @@ observability:
     - trace_id
   log_rotation_bytes: 20971520 # 20 MB
   log_backup_count: 10
-  structured_logging: false
+  structured_logging: true
 
 security:
   enable_auth: true
   api_key_env_var: API_SECRET_KEY
   enable_ip_pseudonymization: true
 
-enable_provider_registry: false
+enable_provider_registry: true

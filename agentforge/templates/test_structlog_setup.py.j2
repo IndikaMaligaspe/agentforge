@@ -1,0 +1,135 @@
+{# test_structlog_setup.py.j2 - Smoke tests for structlog JSON logging setup #}
+"""Smoke tests for structlog JSON logging setup in {{ project_name }}."""
+
+import io
+import json
+import logging as stdlib_logging
+
+import pytest
+import structlog
+from unittest.mock import patch
+
+from backend.observability.logging import (
+    configure_logging,
+    get_logger,
+    log_execution_time,
+    log_function_call,
+    RequestContext,
+)
+
+
+@pytest.fixture(autouse=True)
+def _reset_structlog():
+    """Reset structlog and RequestContext between tests."""
+    import backend.observability.logging as mod
+    mod._configured = False
+    RequestContext.clear()
+    structlog.reset_defaults()
+    yield
+    RequestContext.clear()
+
+
+def _capture_log(func):
+    """Call func() and return the captured JSON log lines from stdout."""
+    buf = io.StringIO()
+    with patch("sys.stdout", buf):
+        import backend.observability.logging as mod
+        mod._configured = False
+        configure_logging()
+        func()
+    output = buf.getvalue().strip()
+    lines = [json.loads(line) for line in output.splitlines() if line.strip()]
+    return lines
+
+
+class TestJSONOutput:
+    def test_basic_log_produces_valid_json_with_required_keys(self):
+        lines = _capture_log(lambda: get_logger("test").info("hello", user="x"))
+        assert len(lines) >= 1
+        log = lines[-1]
+        assert log["event"] == "hello"
+        assert log["user"] == "x"
+        assert "timestamp" in log
+        assert log["level"] == "info"
+
+    def test_multiple_kwargs_appear_as_top_level_keys(self):
+        lines = _capture_log(
+            lambda: get_logger("test").info("multi", a=1, b="two", c=True)
+        )
+        log = lines[-1]
+        assert log["a"] == 1
+        assert log["b"] == "two"
+        assert log["c"] is True
+
+
+class TestRequestContext:
+    def test_request_id_appears_in_log_output(self):
+        def _log():
+            RequestContext.set_request_id("req-abc-123")
+            get_logger("test").info("ctx_test")
+
+        lines = _capture_log(_log)
+        log = lines[-1]
+        assert log["request_id"] == "req-abc-123"
+
+    def test_clear_removes_context_from_logs(self):
+        def _log():
+            RequestContext.set_request_id("req-will-clear")
+            RequestContext.clear()
+            get_logger("test").info("after_clear")
+
+        lines = _capture_log(_log)
+        log = lines[-1]
+        assert "request_id" not in log
+
+    def test_add_context_appears_in_logs(self):
+        def _log():
+            RequestContext.add_context("tenant", "acme")
+            get_logger("test").info("custom_ctx")
+
+        lines = _capture_log(_log)
+        log = lines[-1]
+        assert log["tenant"] == "acme"
+
+    def test_get_all_context_returns_bound_vars(self):
+        RequestContext.set_request_id("r1")
+        RequestContext.add_context("foo", "bar")
+
+        ctx = RequestContext.get_all_context()
+        assert ctx["request_id"] == "r1"
+        assert ctx["foo"] == "bar"
+
+
+class TestExecutionTime:
+    def test_log_execution_time_produces_timing_log(self):
+        def _log():
+            logger = get_logger("test")
+            with log_execution_time(logger, "test_operation"):
+                pass  # instant
+
+        lines = _capture_log(_log)
+        log = lines[-1]
+        assert log["operation"] == "test_operation"
+        assert "execution_time_ms" in log
+        assert isinstance(log["execution_time_ms"], (int, float))
+
+
+class TestFunctionCallDecorator:
+    def test_log_function_call_produces_entry_and_exit(self):
+        def _log():
+            # Force DEBUG level so decorator logs are visible
+            stdlib_logging.getLogger().setLevel(stdlib_logging.DEBUG)
+            logger = get_logger("test")
+
+            @log_function_call(logger)
+            def my_func():
+                return 42
+
+            my_func()
+
+        lines = _capture_log(_log)
+        events = [l["event"] for l in lines]
+        assert "function_entry" in events
+        assert "function_exit" in events
+        entry = next(l for l in lines if l["event"] == "function_entry")
+        assert entry["function"] == "my_func"

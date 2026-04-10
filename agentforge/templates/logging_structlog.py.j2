@@ -1,0 +1,246 @@
+{# logging_structlog.py.j2 - Structlog-based centralized logging configuration #}
+"""
+Centralized logging configuration module for {{ project_name }} application.
+
+Uses structlog for structured JSON logging suitable for log aggregation pipelines
+(e.g., ELK/OpenSearch, Loki, Cloud Logging).
+
+Public API:
+- configure_logging()    — call once at app startup
+- get_logger(name)       — returns a structlog BoundLogger
+- RequestContext         — per-request context backed by structlog.contextvars
+- log_execution_time()   — context manager for timing operations
+- log_function_call()    — decorator for function entry/exit logging
+"""
+
+import logging
+import os
+import sys
+import time
+import uuid
+from contextlib import contextmanager
+from typing import Any, Callable, Dict, Generator, Optional
+
+import structlog
+from structlog.contextvars import (
+    bind_contextvars,
+    clear_contextvars,
+    get_contextvars,
+    merge_contextvars,
+)
+
+# ---------------------------------------------------------------------------
+# Environment-based log levels
+# ---------------------------------------------------------------------------
+LOG_LEVELS = {
+    "development": logging.DEBUG,
+    "testing": logging.DEBUG,
+    "staging": logging.INFO,
+    "production": logging.WARNING,
+}
+
+ENV = os.getenv("ENVIRONMENT", "development")
+DEFAULT_LOG_LEVEL = LOG_LEVELS.get(ENV, logging.INFO)
+
+_configured = False
+
+
+def configure_logging(log_level: Optional[int] = None) -> None:
+    """Configure structlog + stdlib root logger. Call once at app startup."""
+    global _configured
+    if _configured:
+        return
+    _configured = True
+
+    level = log_level or DEFAULT_LOG_LEVEL
+
+    # Shared processors used by both structlog-native and stdlib loggers
+    shared_processors: list[structlog.types.Processor] = [
+        merge_contextvars,
+        structlog.processors.add_log_level,
+        structlog.stdlib.add_logger_name,
+        structlog.processors.TimeStamper(fmt="iso", utc=True),
+        structlog.processors.StackInfoRenderer(),
+        structlog.processors.format_exc_info,
+    ]
+
+    # Configure structlog — use stdlib LoggerFactory so that
+    # add_logger_name can read logger.name and level filtering works.
+    structlog.configure(
+        processors=[
+            *shared_processors,
+            structlog.stdlib.ProcessorFormatter.wrap_for_formatter,
+        ],
+        wrapper_class=structlog.stdlib.BoundLogger,
+        context_class=dict,
+        logger_factory=structlog.stdlib.LoggerFactory(),
+        cache_logger_on_first_use=True,
+    )
+
+    # Also configure stdlib root logger so that third-party libraries
+    # that use stdlib logging emit JSON to stdout.
+    root = logging.getLogger()
+    root.setLevel(level)
+    root.handlers.clear()
+
+    handler = logging.StreamHandler(sys.stdout)
+    handler.setFormatter(structlog.stdlib.ProcessorFormatter(
+        processors=[
+            structlog.stdlib.ProcessorFormatter.remove_processors_meta,
+            structlog.processors.JSONRenderer(),
+        ],
+        foreign_pre_chain=shared_processors,
+    ))
+    root.addHandler(handler)
+
+
+# ---------------------------------------------------------------------------
+# RequestContext — thin facade over structlog.contextvars
+# ---------------------------------------------------------------------------
+class RequestContext:
+    """
+    Per-request context backed by ``structlog.contextvars``.
+
+    Each async task (HTTP request) has its own isolated copy of all values.
+    Concurrent requests cannot read or overwrite each other's context,
+    eliminating cross-request data-leakage.
+    """
+
+    @classmethod
+    def set_request_id(cls, request_id: Optional[str] = None) -> str:
+        """Set the current request ID or generate a new UUID."""
+        rid = request_id or str(uuid.uuid4())
+        bind_contextvars(request_id=rid)
+        return rid
+
+    @classmethod
+    def get_request_id(cls) -> Optional[str]:
+        """Return the current task's request ID."""
+        return get_contextvars().get("request_id")
+
+{% for field in context_fields %}
+{% if field != "request_id" %}
+    @classmethod
+    def set_{{ field }}(cls, {{ field }}: str) -> None:
+        """Store the current {{ field }} in this task's context."""
+        bind_contextvars({{ field }}={{ field }})
+
+    @classmethod
+    def get_{{ field }}(cls) -> Optional[str]:
+        """Return the current task's {{ field }}."""
+        return get_contextvars().get("{{ field }}")
+
+{% endif %}
+{% endfor %}
+    @classmethod
+    def add_context(cls, key: str, value: Any) -> None:
+        """Add a key-value pair to the structlog context."""
+        bind_contextvars(**{key: value})
+
+    @classmethod
+    def get_context(cls, key: str) -> Any:
+        """Retrieve a value from the structlog context by key."""
+        return get_contextvars().get(key)
+
+    @classmethod
+    def get_all_context(cls) -> Dict[str, Any]:
+        """Return a snapshot of all structlog context variables."""
+        return dict(get_contextvars())
+
+    @classmethod
+    def clear(cls) -> None:
+        """Reset all structlog context variables for the current task."""
+        clear_contextvars()
+
+
+# ---------------------------------------------------------------------------
+# Logger factory
+# ---------------------------------------------------------------------------
+def get_logger(name: str, log_level: Optional[int] = None) -> structlog.stdlib.BoundLogger:
+    """Return a structlog BoundLogger. Drop-in replacement for stdlib loggers.
+
+    Args:
+        name: Logger name, typically ``__name__`` of the calling module.
+        log_level: Optional log level override (used only on first call).
+
+    Returns:
+        A configured structlog BoundLogger instance.
+    """
+    if not _configured:
+        configure_logging(log_level)
+    return structlog.get_logger(name)
+
+
+# ---------------------------------------------------------------------------
+# Convenience helpers
+# ---------------------------------------------------------------------------
+@contextmanager
+def log_execution_time(logger, operation_name: str) -> Generator[None, None, None]:
+    """Context manager that logs the execution time of an operation.
+
+    Args:
+        logger: structlog BoundLogger instance to use.
+        operation_name: Human-readable name of the operation being timed.
+
+    Example::
+
+        logger = get_logger(__name__)
+        with log_execution_time(logger, "database_query"):
+            result = execute_query(...)
+    """
+    start_time = time.time()
+    try:
+        yield
+    finally:
+        execution_time_ms = round((time.time() - start_time) * 1000, 2)
+        logger.info(
+            "operation_completed",
+            operation=operation_name,
+            execution_time_ms=execution_time_ms,
+        )
+
+
+def log_function_call(func_logger=None):
+    """Decorator that logs function entry and exit with timing information.
+
+    Args:
+        func_logger: structlog BoundLogger to use. If ``None``, a logger
+            scoped to the decorated function's module is created automatically.
+
+    Example::
+
+        @log_function_call(logger)
+        def process_data(data):
+            ...
+    """
+    def decorator(func: Callable):
+        _logger = func_logger if func_logger is not None else get_logger(func.__module__)
+
+        def wrapper(*args, **kwargs):
+            func_name = func.__name__
+            _logger.debug("function_entry", function=func_name)
+            start_time = time.time()
+
+            try:
+                result = func(*args, **kwargs)
+                execution_time_ms = round((time.time() - start_time) * 1000, 2)
+                _logger.debug(
+                    "function_exit",
+                    function=func_name,
+                    execution_time_ms=execution_time_ms,
+                )
+                return result
+            except Exception as e:
+                execution_time_ms = round((time.time() - start_time) * 1000, 2)
+                _logger.error(
+                    "function_exception",
+                    function=func_name,
+                    execution_time_ms=execution_time_ms,
+                    error=str(e),
+                    exc_info=True,
+                )
+                raise
+
+        return wrapper
+
+    return decorator

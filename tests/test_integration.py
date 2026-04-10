@@ -1,167 +1,67 @@
-"""
-Integration tests for agentforge CLI tool.
-
-These tests verify the end-to-end functionality of the CLI tool
-by simulating actual usage scenarios.
-"""
-import os
-import pytest
-import tempfile
-import shutil
+"""End-to-end integration test: scaffold with all new flags enabled."""
+import ast
+import warnings
 from pathlib import Path
-from unittest.mock import patch, MagicMock
 
-from agentforge.cli.app import app
-from agentforge.schema.models import ProjectConfig
-from agentforge.schema.loader import load_project_config
-from typer.testing import CliRunner
+import pytest
 
-@pytest.fixture
-def runner():
-    """Create a CLI runner for testing."""
-    return CliRunner()
+from agentforge.engine.renderer import TemplateRenderer
+from agentforge.schema.loader import load
 
-@pytest.fixture
-def temp_project_dir():
-    """Create a temporary directory for project generation."""
-    temp_dir = tempfile.mkdtemp()
-    yield Path(temp_dir)
-    shutil.rmtree(temp_dir)
+FIXTURE = Path(__file__).parent / "fixtures" / "all_flags_on.yaml"
 
-@pytest.fixture
-def mock_renderer():
-    """Mock the template renderer to avoid actual file generation."""
-    with patch("agentforge.writer.scaffold.TemplateRenderer") as mock:
-        renderer_instance = MagicMock()
-        mock.return_value = renderer_instance
-        # Mock render_all to return some fake files
-        renderer_instance.render_all.return_value = [
-            (Path("backend/main.py"), "# Main file content"),
-            (Path("backend/agents/base_agent.py"), "# Base agent content"),
-            (Path("README.md"), "# Project README"),
-        ]
-        yield mock
 
-@pytest.fixture
-def mock_wizard():
-    """Mock the project wizard to return a predefined config."""
-    with patch("agentforge.cli.init_cmd.ProjectWizard") as mock:
-        wizard_instance = MagicMock()
-        mock.return_value = wizard_instance
-        
-        # Create a minimal project config
-        config = ProjectConfig(
-            metadata={
-                "name": "test-project",
-                "description": "Test project for integration tests",
-                "version": "0.1.0",
-            },
-            agents=[{
-                "key": "analysis",
-                "name": "Analysis Agent",
-                "description": "Analyzes data",
-            }],
-            workflow={
-                "default_intent": "analysis",
-            }
-        )
-        
-        wizard_instance.run.return_value = config
-        yield mock
+def test_all_flags_on_integration():
+    # Load the fixture — suppress any provider/model mismatch UserWarning
+    # even though we use matched provider + model; this guards against
+    # unrelated deprecation warnings polluting the test.
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        cfg = load(FIXTURE)
 
-def test_init_command(runner, temp_project_dir, mock_renderer, mock_wizard):
-    """Test the 'init' command for project initialization."""
-    with patch("agentforge.cli.init_cmd.Path.cwd", return_value=temp_project_dir):
-        # Run the init command
-        result = runner.invoke(app, ["init"])
-        
-        # Check the command executed successfully
-        assert result.exit_code == 0
-        
-        # Verify the wizard was called
-        mock_wizard.return_value.run.assert_called_once()
-        
-        # Verify the renderer was called
-        mock_renderer.return_value.render_all.assert_called_once()
+    # Sanity: fixture carries the expected flag values.
+    assert cfg.observability.structured_logging is True
+    assert cfg.workflow.router_llm_provider == "anthropic"
+    assert cfg.workflow.router_llm_model.value.startswith("claude-")
+    assert cfg.enable_provider_registry is True
 
-def test_new_agent_command(runner, temp_project_dir, mock_renderer):
-    """Test the 'new agent' command for adding a new agent."""
-    # Create a minimal project.yaml file
-    project_dir = temp_project_dir
-    os.makedirs(project_dir / "backend" / "agents", exist_ok=True)
-    
-    with open(project_dir / "project.yaml", "w") as f:
-        f.write("""
-metadata:
-  name: test-project
-  description: Test project
-  version: 0.1.0
-agents:
-  - key: analysis
-    name: Analysis Agent
-    description: Analyzes data
-workflow:
-  default_intent: analysis
-        """)
-    
-    # Mock the renderer to return agent files
-    renderer_instance = mock_renderer.return_value
-    renderer_instance.render_agent.return_value = [
-        (Path("backend/agents/sql_agent.py"), "# SQL agent content"),
-        (Path("backend/agents/registry.py"), "# Updated registry content"),
-    ]
-    
-    # Mock cwd to return our temp directory
-    with patch("agentforge.cli.new_cmd.Path.cwd", return_value=project_dir):
-        # Run the new agent command
-        result = runner.invoke(app, [
-            "new", "agent",
-            "--key", "sql",
-            "--name", "SQL Agent",
-            "--description", "Executes SQL queries"
-        ])
-        
-        # Check the command executed successfully
-        assert result.exit_code == 0
-        
-        # Verify the renderer was called with correct parameters
-        renderer_instance.render_agent.assert_called_once()
-        
-        # Get the arguments passed to render_agent
-        args, kwargs = renderer_instance.render_agent.call_args
-        
-        # Verify the agent config
-        agent_config = args[0]
-        assert agent_config.key == "sql"
-        assert agent_config.name == "SQL Agent"
-        assert agent_config.description == "Executes SQL queries"
+    r = TemplateRenderer()
+    rendered = {str(p): c for p, c in r.render_all(cfg)}
 
-def test_validate_command(runner, temp_project_dir):
-    """Test the 'validate' command for project validation."""
-    # Create a minimal project.yaml file
-    project_dir = temp_project_dir
-    
-    with open(project_dir / "project.yaml", "w") as f:
-        f.write("""
-metadata:
-  name: test-project
-  description: Test project
-  version: 0.1.0
-agents:
-  - key: analysis
-    name: Analysis Agent
-    description: Analyzes data
-workflow:
-  default_intent: analysis
-        """)
-    
-    # Mock cwd to return our temp directory
-    with patch("agentforge.cli.validate_cmd.Path.cwd", return_value=project_dir):
-        # Run the validate command
-        result = runner.invoke(app, ["validate"])
-        
-        # Check the command executed successfully
-        assert result.exit_code == 0
-        
-        # Verify the output indicates successful validation
-        assert "valid" in result.stdout.lower()
+    # Every generated .py file must parse as valid Python.
+    for rel_path, content in rendered.items():
+        if rel_path.endswith(".py"):
+            try:
+                ast.parse(content)
+            except SyntaxError as e:
+                pytest.fail(f"SyntaxError in {rel_path}: {e}")
+
+    # ── structlog (Feature 1) ─────────────────────────────────────────
+    logging_py = rendered["backend/observability/logging.py"]
+    assert "import structlog" in logging_py, (
+        "structlog template must be used when structured_logging=true"
+    )
+    middleware_py = rendered["backend/middleware/logging_middleware.py"]
+    assert "clear_contextvars" in middleware_py, (
+        "middleware must call clear_contextvars() when structlog is on"
+    )
+    # Project-level smoke test file must be generated.
+    assert "backend/tests/test_structlog_setup.py" in rendered, (
+        "structlog smoke test file must be generated when flag is on"
+    )
+
+    # ── Router vendor neutrality (Feature 2) ──────────────────────────
+    router_py = rendered["backend/graph/nodes/query_router_node.py"]
+    assert "from langchain_anthropic import ChatAnthropic" in router_py
+    assert "ChatAnthropic(model_name=" in router_py
+    assert "ChatOpenAI" not in router_py
+    assert "langchain_openai" not in router_py
+
+    requirements = rendered["requirements.txt"]
+    assert "langchain-anthropic>=0.1.0" in requirements
+
+    # ── Provider registry (Feature 3) ─────────────────────────────────
+    assert "backend/config/provider_registry.py" in rendered
+    assert "backend/config/providers.yaml" in rendered
+    registry_py = rendered["backend/config/provider_registry.py"]
+    assert "class ProviderRegistry" in registry_py

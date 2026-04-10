@@ -6,7 +6,11 @@ This module contains the query_router_node function that classifies
 queries as {% for intent in valid_intents %}'{{ intent }}'{% if not loop.last %}, {% endif %}{% endfor %} and routes them accordingly.
 """
 
+{% if router_llm_provider == "anthropic" %}
+from langchain_anthropic import ChatAnthropic
+{% else %}
 from langchain_openai import ChatOpenAI
+{% endif %}
 from ..state import AgentState
 from observability.logging import get_logger, log_with_props, log_execution_time, RequestContext
 
@@ -36,7 +40,11 @@ def query_router_node(state: AgentState) -> AgentState:
     
     try:
         # Initialize a fast LLM for classification
+        {% if router_llm_provider == "anthropic" %}
+        llm = ChatAnthropic(model_name="{{ router_llm_model }}", temperature=0)
+        {% else %}
         llm = ChatOpenAI(model="{{ router_llm_model }}", temperature=0)
+        {% endif %}
         
         # Build the classification prompt
         ROUTER_PROMPT = """Classify the user's question as one of: {% for intent in valid_intents %}{{ intent }}{% if not loop.last %}, {% endif %}{% endfor %}.

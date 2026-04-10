@@ -223,6 +223,22 @@ security:
   enable_ip_pseudonymization: false # Hash IPs in logs
 ```
 
+## Optional features
+
+The scaffolder exposes three opt-in feature flags for the generated project. All default to the pre-existing behaviour, so existing `project.yaml` files continue to work unchanged.
+
+### `observability.structured_logging` (default: `false`)
+
+When enabled, generates `backend/observability/logging.py` using [structlog](https://www.structlog.org/) for JSON-structured logs, plus a companion smoke test at `backend/tests/test_structlog_setup.py`. The middleware is rewritten to use `clear_contextvars()` and structlog-native keyword logging. Recommended for production and Kubernetes deployments where log aggregators consume JSON.
+
+### `workflow.router_llm_provider` (default: `"openai"`)
+
+Selects the LLM provider used by `query_router_node.py` for intent classification. Set to `"anthropic"` to switch from `langchain_openai.ChatOpenAI` to `langchain_anthropic.ChatAnthropic`; `langchain-anthropic` is added to the generated `requirements.txt` when selected. Remember to also set `workflow.router_llm_model` to a matching model (e.g., `claude-3-haiku-20240307`) — agentforge warns at validation time if the provider and model appear mismatched.
+
+### `enable_provider_registry` (default: `false`)
+
+Generates `backend/config/provider_registry.py` and a sample `backend/config/providers.yaml` in the scaffolded project. The registry provides a generic abstraction for registering and looking up third-party data providers at runtime.
+
 ## Development
 
 ### Setup Development Environment

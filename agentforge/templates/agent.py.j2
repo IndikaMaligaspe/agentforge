@@ -34,7 +34,8 @@ class {{ agent.class_name }}(BaseAgent):
     def needs_validation(self) -> bool:
         return {{ agent.needs_validation }}
 
-    {% if enable_tracing %}@observe(name="{{ agent.key }}_agent_run")
+    {% if enable_tracing %}
+    @observe(name="{{ agent.key }}_agent_run")
     {% endif %}
     def run(self, query: str) -> dict:
         llm = ChatOpenAI(model="{{ agent.llm_model }}", temperature=0)

@@ -1,0 +1,392 @@
+{# provider_registry.py.j2 - Generic multi-provider registry abstraction #}
+"""
+Generic provider registry for {{ project_name }}.
+
+This module defines a framework-agnostic abstraction for registering and
+resolving external data providers at runtime.  It is intentionally free of
+any concrete provider implementations — register your own providers either
+programmatically (see the example at the bottom of this file) or by pointing
+ProviderRegistry.load_yaml() at a providers.yaml config file.
+
+Key concepts
+------------
+MetricMapping   — Maps a provider-specific metric key to a common field name,
+                  with an optional value-transform function.
+ProviderSpec    — Blueprint for a provider: its slug, display name, environment
+                  variable prefix, credential fields, and metric mappings.
+ProviderConfig  — Runtime-resolved configuration for a single active provider
+                  (credentials already resolved from environment variables).
+ProviderRegistry — Central registry: register, retrieve, and enumerate providers.
+"""
+from __future__ import annotations
+
+import logging
+import os
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any, Callable, Optional
+
+import yaml
+from pydantic import BaseModel
+
+logger = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Metric normalization helpers
+# ---------------------------------------------------------------------------
+
+def _identity(v: Any) -> Any:
+    """Pass-through — no transformation applied."""
+    return v
+
+
+# ---------------------------------------------------------------------------
+# Core dataclasses
+# ---------------------------------------------------------------------------
+
+@dataclass
+class MetricMapping:
+    """Maps a provider-specific metric key to a common scoring/output field.
+
+    Attributes
+    ----------
+    source_key:
+        The key as it appears in the provider's raw response payload.
+    target_key:
+        The normalized key used downstream (e.g. in scoring, storage, etc.).
+    transform:
+        Optional callable applied to the raw value before writing to target_key.
+        Defaults to the identity function (no transformation).
+    """
+    source_key: str
+    target_key: str
+    transform: Callable[[Any], Any] = field(default=_identity)
+
+
+@dataclass
+class ProviderSpec:
+    """Blueprint for a provider — credential mapping and metric normalization.
+
+    Attributes
+    ----------
+    slug:
+        Machine-readable identifier, e.g. ``"my_provider"``.
+    env_prefix:
+        Prefix for environment variables that hold credentials,
+        e.g. ``"MY_PROVIDER"`` → env vars like ``MY_PROVIDER_API_KEY``.
+    display_name:
+        Human-readable name shown in logs and UI, e.g. ``"My Provider"``.
+    credential_fields:
+        Maps the fetcher payload key to the env var *suffix*.
+        E.g. ``{"api_key": "API_KEY"}`` → reads ``{env_prefix}_API_KEY``.
+    fetcher_metrics:
+        List of metric descriptors to request from the data-fetching layer.
+        Each entry is a dict with at least a ``"key"`` field.
+    metric_mappings:
+        Ordered list of :class:`MetricMapping` instances describing how to
+        normalise raw provider metrics into common fields.
+    """
+    slug: str
+    env_prefix: str
+    display_name: str
+    credential_fields: dict[str, str] = field(default_factory=dict)
+    fetcher_metrics: list[dict[str, Any]] = field(default_factory=list)
+    metric_mappings: list[MetricMapping] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# Runtime-resolved provider configuration
+# ---------------------------------------------------------------------------
+
+class ProviderConfig(BaseModel):
+    """Runtime configuration for a single active provider.
+
+    Instances are produced by :meth:`ProviderRegistry.get` after resolving
+    credentials from environment variables.
+
+    Attributes
+    ----------
+    slug:
+        Matches the :attr:`ProviderSpec.slug` this config was resolved from.
+    display_name:
+        Human-readable provider name.
+    account_id:
+        Primary account/tenant identifier for this provider.
+    account_name:
+        Human-readable account label (used for logging — do not log PII).
+    credentials:
+        Fully-assembled credentials dict ready to hand to the fetching layer.
+    currency:
+        ISO 4217 currency code for this account (e.g. ``"USD"``).
+    timezone:
+        IANA timezone string for this account (e.g. ``"America/New_York"``).
+        Empty string when not applicable.
+    """
+    slug: str
+    display_name: str
+    account_id: str
+    account_name: str
+    credentials: dict[str, Any]
+    currency: str
+    timezone: str = ""
+
+
+# ---------------------------------------------------------------------------
+# Provider registry
+# ---------------------------------------------------------------------------
+
+class ProviderRegistry:
+    """Central registry for all data providers in this project.
+
+    Providers are registered either programmatically via :meth:`register` or
+    loaded from a YAML file via :meth:`load_yaml`.  After registration the
+    registry resolves credentials from environment variables on demand.
+
+    This class uses class-level state so that it acts as a singleton-style
+    registry throughout the application process.
+    """
+
+    _catalog: dict[str, ProviderSpec] = {}
+
+    # ── Registration ──────────────────────────────────────────────────────────
+
+    @classmethod
+    def register(cls, spec: ProviderSpec) -> None:
+        """Register a :class:`ProviderSpec` under its slug.
+
+        Raises
+        ------
+        ValueError
+            If a spec with the same slug is already registered.
+        """
+        if spec.slug in cls._catalog:
+            raise ValueError(
+                f"Provider '{spec.slug}' is already registered. "
+                "Use ProviderRegistry.unregister() first if you need to replace it."
+            )
+        cls._catalog[spec.slug] = spec
+        logger.debug("Registered provider: %s", spec.slug)
+
+    @classmethod
+    def unregister(cls, slug: str) -> None:
+        """Remove a previously registered provider by slug (idempotent)."""
+        cls._catalog.pop(slug, None)
+        logger.debug("Unregistered provider: %s", slug)
+
+    @classmethod
+    def clear(cls) -> None:
+        """Remove all registered providers (useful in tests)."""
+        cls._catalog.clear()
+
+    # ── Retrieval ─────────────────────────────────────────────────────────────
+
+    @classmethod
+    def get_spec(cls, slug: str) -> ProviderSpec:
+        """Return the :class:`ProviderSpec` for *slug*.
+
+        Raises
+        ------
+        KeyError
+            If no provider with that slug is registered.
+        """
+        try:
+            return cls._catalog[slug]
+        except KeyError:
+            raise KeyError(
+                f"Unknown provider: '{slug}'. "
+                f"Registered providers: {list(cls._catalog)}"
+            )
+
+    @classmethod
+    def get(cls, slug: str) -> ProviderConfig:
+        """Resolve credentials from environment variables and return a :class:`ProviderConfig`.
+
+        Credentials are read from ``{spec.env_prefix}_{suffix}`` environment
+        variables as declared in :attr:`ProviderSpec.credential_fields`.
+
+        Raises
+        ------
+        KeyError
+            If the provider slug is not registered.
+        EnvironmentError
+            If a required credential environment variable is missing.
+        """
+        spec = cls.get_spec(slug)
+        credentials: dict[str, Any] = {}
+        missing: list[str] = []
+
+        for payload_key, env_suffix in spec.credential_fields.items():
+            env_var = f"{spec.env_prefix}_{env_suffix}"
+            value = os.getenv(env_var)
+            if value is None:
+                missing.append(env_var)
+            else:
+                credentials[payload_key] = value
+
+        if missing:
+            raise EnvironmentError(
+                f"Provider '{slug}' is missing required environment variables: {missing}"
+            )
+
+        return ProviderConfig(
+            slug=spec.slug,
+            display_name=spec.display_name,
+            account_id=credentials.get("id", ""),
+            account_name=credentials.get("name", ""),
+            credentials=credentials,
+            currency=credentials.get("currency_code", ""),
+            timezone=credentials.get("timezone", ""),
+        )
+
+    @classmethod
+    def list(cls) -> list[str]:
+        """Return a sorted list of all registered provider slugs."""
+        return sorted(cls._catalog)
+
+    # ── YAML loading ──────────────────────────────────────────────────────────
+
+    @classmethod
+    def load_yaml(cls, path: str | Path) -> None:
+        """Populate the registry from a YAML config file.
+
+        Expected YAML structure (see providers.yaml for a documented example)::
+
+            providers:
+              my_provider:
+                display_name: "My Provider"
+                env_prefix: "MY_PROVIDER"
+                credential_fields:
+                  api_key: API_KEY
+                  account_id: ACCOUNT_ID
+                fetcher_metrics:
+                  - key: revenue
+                    options: []
+                metric_mappings:
+                  - source_key: revenue
+                    target_key: revenue
+
+        Raises
+        ------
+        FileNotFoundError
+            If *path* does not exist.
+        ValueError
+            If the YAML structure is invalid.
+        """
+        config_path = Path(path)
+        if not config_path.exists():
+            raise FileNotFoundError(f"Provider config not found: {config_path}")
+
+        with config_path.open() as fh:
+            raw: dict[str, Any] = yaml.safe_load(fh) or {}
+
+        providers_raw = raw.get("providers") or {}
+        for slug, provider_data in providers_raw.items():
+            if not isinstance(provider_data, dict):
+                raise ValueError(f"Provider '{slug}' config must be a mapping, got {type(provider_data)}")
+
+            mappings = [
+                MetricMapping(
+                    source_key=m["source_key"],
+                    target_key=m["target_key"],
+                )
+                for m in provider_data.get("metric_mappings", [])
+            ]
+
+            spec = ProviderSpec(
+                slug=slug,
+                env_prefix=provider_data.get("env_prefix", slug.upper()),
+                display_name=provider_data.get("display_name", slug),
+                credential_fields=provider_data.get("credential_fields", {}),
+                fetcher_metrics=provider_data.get("fetcher_metrics", []),
+                metric_mappings=mappings,
+            )
+            cls.register(spec)
+
+        logger.info("Loaded %d provider(s) from %s", len(providers_raw), config_path)
+
+
+# ---------------------------------------------------------------------------
+# Metric normalization helper
+# ---------------------------------------------------------------------------
+
+def normalize_metrics(raw_metrics: dict[str, Any], provider_slug: str) -> dict[str, Any]:
+    """Transform provider-specific metrics into common fields.
+
+    Applies each :class:`MetricMapping` in the registered :class:`ProviderSpec`
+    to *raw_metrics*, returning a new dict with the normalized keys.
+
+    If *provider_slug* is not registered the raw dict is returned unchanged so
+    that the pipeline degrades gracefully rather than raising.
+
+    Parameters
+    ----------
+    raw_metrics:
+        The metrics payload as returned by the data-fetching layer.
+    provider_slug:
+        The slug of the provider that produced *raw_metrics*.
+
+    Returns
+    -------
+    dict
+        Normalized metrics keyed by :attr:`MetricMapping.target_key`.
+    """
+    try:
+        spec = ProviderRegistry.get_spec(provider_slug)
+    except KeyError:
+        logger.warning(
+            "normalize_metrics: unknown provider '%s', returning raw metrics.", provider_slug
+        )
+        return raw_metrics
+
+    normalized: dict[str, Any] = {}
+    for mapping in spec.metric_mappings:
+        value = raw_metrics.get(mapping.source_key)
+        normalized[mapping.target_key] = mapping.transform(value) if value is not None else None
+    return normalized
+
+
+def get_fetcher_metrics(provider_slug: str) -> list[dict[str, Any]]:
+    """Return the list of metric descriptors to request from the fetcher.
+
+    Parameters
+    ----------
+    provider_slug:
+        The slug of the registered provider.
+
+    Raises
+    ------
+    KeyError
+        If *provider_slug* is not registered.
+    """
+    return ProviderRegistry.get_spec(provider_slug).fetcher_metrics
+
+
+# ---------------------------------------------------------------------------
+# Example: register a custom provider
+# (copy and adapt this block into your application startup code)
+# ---------------------------------------------------------------------------
+#
+# from .provider_registry import ProviderRegistry, ProviderSpec, MetricMapping
+#
+# ProviderRegistry.register(ProviderSpec(
+#     slug="my_provider",
+#     env_prefix="MY_PROVIDER",
+#     display_name="My Provider",
+#     credential_fields={
+#         "api_key": "API_KEY",        # reads MY_PROVIDER_API_KEY from env
+#         "account_id": "ACCOUNT_ID",  # reads MY_PROVIDER_ACCOUNT_ID from env
+#     },
+#     fetcher_metrics=[
+#         {"key": "revenue", "options": []},
+#         {"key": "impressions", "options": []},
+#     ],
+#     metric_mappings=[
+#         MetricMapping("revenue", "revenue"),
+#         MetricMapping("impressions", "impressions"),
+#     ],
+# ))
+#
+# Alternatively, load all providers from a YAML file at startup:
+#
+# ProviderRegistry.load_yaml("config/providers.yaml")
