@@ -31,6 +31,29 @@ dependencies = [
   "rich>=13.7",
 ]
 
+[project.optional-dependencies]
+# Runtime dependencies of scaffolded projects. Installed only to let
+# agentforge's own test suite actually import every generated module
+# and verify the scaffolded project works end-to-end.
+scaffold-test = [
+  "fastapi>=0.110.0",
+  "uvicorn[standard]>=0.27.0",
+  "python-dotenv>=1.0.0",
+  "langchain>=0.1.0",
+  "langchain-core>=0.1.0",
+  "langchain-openai>=0.1.0",
+  "langchain-anthropic>=0.1.0,<0.4.0",
+  "langgraph>=0.0.20",
+  "openai>=1.12.0",
+  "structlog>=24.1.0",
+  "python-json-logger>=2.0.7",
+  "python-multipart>=0.0.7",
+  "cryptography>=42.0.0",
+  "httpx>=0.26.0",
+  "asyncpg>=0.29.0",
+  "langfuse>=2.0.0",
+]
+
 [project.scripts]
 agentforge = "agentforge.cli.app:app"
 
