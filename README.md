@@ -239,6 +239,18 @@ Selects the LLM provider used by `query_router_node.py` for intent classificatio
 
 Generates `backend/config/provider_registry.py` and a sample `backend/config/providers.yaml` in the scaffolded project. The registry provides a generic abstraction for registering and looking up third-party data providers at runtime.
 
+### Customizing the answer shape
+
+The scaffolded `backend/graph/nodes/answer_node.py` exposes a small
+`_shape_answer(result_obj)` helper that turns an agent's raw result
+dict into the user-facing answer payload. The default returns
+`{"type": "text", "data": ...}`, which is intentionally minimal — your
+project's frontend almost certainly wants something richer (tables,
+charts, MDX, Slack blocks, ...). Edit `_shape_answer` in place to
+produce whatever shape your client consumes; the function is the
+single intentional extension point for output formatting, so you do
+not need to touch the rest of the workflow.
+
 ## Development
 
 ### Setup Development Environment
@@ -263,6 +275,28 @@ hatch run typecheck
 # Format code
 hatch run fmt
 ```
+
+#### Without hatch (plain venv)
+
+If you prefer a vanilla virtualenv, the test suite needs the runtime
+dependencies of *scaffolded* projects (fastapi, langgraph, langchain,
+structlog, etc.) installed alongside agentforge itself. They live in
+the optional `scaffold-test` extra:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+
+# Install agentforge plus the scaffolded-project runtime deps used by
+# the full test suite (test_scaffold_import.py walks every generated
+# .py file and imports it for real, so it needs them on sys.path).
+pip install -e '.[scaffold-test]'
+
+pytest tests/
+```
+
+Without the `scaffold-test` extra, `tests/test_scaffold_import.py` will
+skip with a clear message listing which packages are missing.
 
 ### Recent Improvements
 
