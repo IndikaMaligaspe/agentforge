@@ -284,6 +284,22 @@ class TemplateRenderer:
 #   (resolver, str)                     — template name resolved via resolver(config) at render time
 #   (resolver, str, predicate)          — combined swap + conditional
 STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
+    # ── Package markers (__init__.py) ─────────────────────────────────────────
+    # Required so that Python treats each directory as a regular package,
+    # enabling both absolute imports (with backend/ on sys.path) and relative
+    # imports (e.g. `from ..state import AgentState`).
+    ("__init__.py.j2",                "backend/__init__.py"),
+    ("agents_init.py.j2",             "backend/agents/__init__.py"),
+    ("__init__.py.j2",                "backend/graph/__init__.py"),
+    ("__init__.py.j2",                "backend/graph/nodes/__init__.py"),
+    ("__init__.py.j2",                "backend/observability/__init__.py"),
+    ("__init__.py.j2",                "backend/middleware/__init__.py"),
+    ("__init__.py.j2",                "backend/security/__init__.py"),
+    ("__init__.py.j2",                "backend/config/__init__.py",
+     lambda c: c.enable_provider_registry),
+    ("__init__.py.j2",                "backend/tests/__init__.py",
+     lambda c: c.observability.structured_logging),
+    # ── Static (per-project) templates ────────────────────────────────────────
     ("base_agent.py.j2",            "backend/agents/base_agent.py"),
     ("registry.py.j2",              "backend/agents/registry.py"),
     ("state.py.j2",                 "backend/graph/state.py"),

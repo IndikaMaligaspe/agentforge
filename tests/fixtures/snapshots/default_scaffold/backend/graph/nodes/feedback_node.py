@@ -10,7 +10,7 @@ from ...agents.registry import AgentRegistry
 from ..state import AgentState
 
 
-MAX_FEEDBACK_ATTEMPTS = {{ max_feedback_attempts }}
+MAX_FEEDBACK_ATTEMPTS = 5
 
 
 def feedback_node(state: AgentState) -> AgentState:
@@ -40,7 +40,7 @@ def improve_answer_node(state: AgentState) -> AgentState:
     Re-invoke the original agent with the prior attempt's context so it can
     produce a better answer.  Attempt counter is incremented here.
     """
-    intent = state.get("intent", "{{ default_intent }}")
+    intent = state.get("intent", "sql")
     query = state.get("query", "")
     prior = state.get("final_answer", "")
 

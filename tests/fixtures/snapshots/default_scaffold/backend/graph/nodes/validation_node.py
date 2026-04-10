@@ -26,7 +26,7 @@ async def validation_node(state: AgentState) -> AgentState:
     """
     # Extract relevant information from state
     agent_response = state.get("agent_response", "")
-    intent = state.get("intent", "{{ default_intent }}")
+    intent = state.get("intent", "sql")
     
     # Default to not validated
     state["validated"] = False
@@ -81,7 +81,7 @@ def should_validate(state: AgentState) -> Literal["validate", "skip"]:
     Returns:
         "validate" if validation is required, "skip" otherwise
     """
-    intent = state.get("intent", "{{ default_intent }}")
+    intent = state.get("intent", "sql")
     agent = AgentRegistry.create(intent)
     
     if agent.needs_validation:

@@ -1,0 +1,54 @@
+"""
+AgentRegistry — auto-discovery and registration of agents.
+"""
+from typing import Dict, Type, Callable, TypeVar
+from agents.base_agent import BaseAgent
+from observability.logging import get_logger
+
+logger = get_logger(__name__)
+
+T = TypeVar('T', bound=BaseAgent)
+
+class AgentRegistry:
+    """
+    Registry for agent classes with auto-discovery.
+    
+    Usage:
+        @AgentRegistry.register("sql")
+        class SQLAgent(BaseAgent):
+            ...
+    """
+    _registry: Dict[str, Type[BaseAgent]] = {}
+    
+    @classmethod
+    def register(cls, key: str) -> Callable[[Type[T]], Type[T]]:
+        """Decorator to register an agent class."""
+        def decorator(agent_cls: Type[T]) -> Type[T]:
+            if key in cls._registry:
+                logger.warning(f"Agent key '{key}' already registered, overwriting")
+            cls._registry[key] = agent_cls
+            logger.info(f"Registered agent '{key}' → {agent_cls.__name__}")
+            return agent_cls
+        return decorator
+    
+    @classmethod
+    def get(cls, key: str) -> Type[BaseAgent]:
+        """Get agent class by key."""
+        if key not in cls._registry:
+            valid_keys = ", ".join(cls._registry.keys())
+            raise ValueError(f"Agent key '{key}' not found. Valid keys: {valid_keys}")
+        return cls._registry[key]
+    
+    @classmethod
+    def create(cls, key: str) -> BaseAgent:
+        """Create an instance of an agent by key."""
+        agent_cls = cls.get(key)
+        return agent_cls()
+    
+    @classmethod
+    def get_all_keys(cls) -> list[str]:
+        """Get all registered agent keys."""
+        return list(cls._registry.keys())
+
+# Valid intents for query_router_node.py
+VALID_INTENTS = ['sql', 'analytics']

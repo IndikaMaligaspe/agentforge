@@ -174,6 +174,17 @@ def get_logger(name: str, log_level: Optional[int] = None) -> structlog.stdlib.B
 # ---------------------------------------------------------------------------
 # Convenience helpers
 # ---------------------------------------------------------------------------
+def log_with_props(logger, level: str, message: str, **props: Any) -> None:
+    """Log ``message`` at ``level`` with arbitrary keyword properties.
+
+    Backward-compatible shim for the stdlib logging template's API so the
+    same caller code works whether ``structured_logging`` is on or off.
+    Under structlog, ``props`` become first-class fields on the event.
+    """
+    method = getattr(logger, level.lower(), logger.info)
+    method(message, **props)
+
+
 @contextmanager
 def log_execution_time(logger, operation_name: str) -> Generator[None, None, None]:
     """Context manager that logs the execution time of an operation.

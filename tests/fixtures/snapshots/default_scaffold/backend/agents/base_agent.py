@@ -1,0 +1,20 @@
+"""
+BaseAgent — Abstract Base Class for all agents in full_featured_project.
+"""
+from abc import ABC, abstractmethod
+from typing import Dict, Any
+
+class BaseAgent(ABC):
+    REQUIRED_RETURN_KEYS = {"success", "output", "error"}
+    EXTRA_RETURN_KEYS: set[str] = set()  # override per-agent
+
+    @property
+    @abstractmethod
+    def name(self) -> str: ...
+
+    @property
+    def needs_validation(self) -> bool:
+        return False
+
+    @abstractmethod
+    def run(self, query: str) -> Dict[str, Any]: ...

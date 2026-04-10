@@ -1,4 +1,3 @@
-{# workflow.py.j2 - LangGraph workflow with supervisor pattern #}
 """
 workflow.py — Supervisor-based workflow with compile-once pattern.
 
@@ -11,10 +10,7 @@ from .state import AgentState
 from .nodes.query_router_node import query_router_node
 from .nodes.supervisor_node import supervisor_node
 from .nodes.answer_node import answer_node
-{% if enable_validation_node %}
 from .nodes.validation_node import validation_node
-{% endif %}
-{% if enable_feedback_loop %}
 from .nodes.feedback_node import (
     feedback_node,
     improve_answer_node,
@@ -22,7 +18,6 @@ from .nodes.feedback_node import (
     feedback_router,
     MAX_FEEDBACK_ATTEMPTS,
 )
-{% endif %}
 from observability.logging import get_logger
 import agents  # ensure all @AgentRegistry.register decorators execute
 
@@ -33,14 +28,11 @@ def _build_graph() -> StateGraph:
     Build the workflow graph with supervisor_node.
 
     This function creates a LangGraph workflow with the following components:
-    - query_router: Classifies queries as {% for intent in valid_intents %}'{{ intent }}'{% if not loop.last %}, {% endif %}{% endfor %}
-    - supervisor: Dispatches to the appropriate agent based on intent
-    {% if enable_validation_node %}- validator: Validates agent results (conditional){% endif %}
-    - answer: Formats the final answer
-    {% if enable_feedback_loop %}- feedback: Evaluates answer quality
+    - query_router: Classifies queries as 'sql', 'analytics'    - supervisor: Dispatches to the appropriate agent based on intent
+- validator: Validates agent results (conditional)    - answer: Formats the final answer
+- feedback: Evaluates answer quality
     - improve_answer: Improves low-quality answers
-    - error_end: Handles persistent low-quality answers{% endif %}
-
+    - error_end: Handles persistent low-quality answers
     Returns:
         Compiled LangGraph workflow
     """
@@ -49,15 +41,11 @@ def _build_graph() -> StateGraph:
     # Add nodes
     graph.add_node("query_router", query_router_node)
     graph.add_node("supervisor", supervisor_node)
-    {% if enable_validation_node %}
     graph.add_node("validator", validation_node)
-    {% endif %}
     graph.add_node("answer", answer_node)
-    {% if enable_feedback_loop %}
     graph.add_node("feedback", feedback_node)
     graph.add_node("improve_answer", improve_answer_node)
     graph.add_node("error_end", error_end_node)
-    {% endif %}
 
     # Set entry point
     graph.set_entry_point("query_router")
@@ -65,7 +53,6 @@ def _build_graph() -> StateGraph:
     # query_router → supervisor (all intents go here; supervisor dispatches internally)
     graph.add_edge("query_router", "supervisor")
 
-    {% if enable_validation_node %}
     # supervisor → validator OR answer based on needs_validation flag
     graph.add_conditional_edges(
         "supervisor",
@@ -75,12 +62,7 @@ def _build_graph() -> StateGraph:
 
     # Validator → answer
     graph.add_edge("validator", "answer")
-    {% else %}
-    # supervisor → answer (direct path without validation)
-    graph.add_edge("supervisor", "answer")
-    {% endif %}
 
-    {% if enable_feedback_loop %}
     # Answer → feedback
     graph.add_edge("answer", "feedback")
 
@@ -93,10 +75,6 @@ def _build_graph() -> StateGraph:
 
     graph.add_edge("improve_answer", "feedback")
     graph.add_edge("error_end", END)
-    {% else %}
-    # Answer → END (no feedback loop)
-    graph.add_edge("answer", END)
-    {% endif %}
 
     return graph
 

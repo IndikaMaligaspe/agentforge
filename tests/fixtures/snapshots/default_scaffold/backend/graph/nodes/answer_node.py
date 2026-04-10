@@ -1,4 +1,3 @@
-{# answer_node.py.j2 - Answer node for LangGraph workflow #}
 """
 Answer Node for the LangGraph workflow.
 
@@ -40,7 +39,7 @@ def answer_node(state: AgentState) -> AgentState:
     """
     node_name = "answer_node"
     request_id = RequestContext.get_request_id()
-    intent = state.get("intent", "{{ default_intent }}")
+    intent = state.get("intent", "sql")
 
     log_with_props(
         logger, "info", f"Entering {node_name}",
