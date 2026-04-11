@@ -99,6 +99,10 @@ test_env/
 # macOS
 .DS_Store
 
+# Internal planning docs — used by the architect/code/validator
+# pipeline during development, not intended for public consumption.
+TODO.md
+
 # Spyder project settings
 .spyderproject
 .spyproject
