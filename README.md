@@ -251,6 +251,33 @@ produce whatever shape your client consumes; the function is the
 single intentional extension point for output formatting, so you do
 not need to touch the rest of the workflow.
 
+Most projects pair `_shape_answer` with a widget schema defined in
+`backend/models/widgets.py` — typically a Pydantic discriminated union
+on a `type: Literal[...]` field, so frontend and backend share a
+well-typed contract. Agentforge does not scaffold this file because
+the widget vocabulary is entirely project-specific (table, chart,
+card, metric, mdx, Slack blocks, Vega-Lite specs, ...) and any default
+shapes would be wrong for every concrete project. Define the shapes
+your frontend consumes yourself, import them into `answer_node.py`,
+and have `_shape_answer` return instances. A typical starting point:
+
+```python
+# backend/models/widgets.py
+from typing import Literal, Union
+from pydantic import BaseModel, Field
+
+class TextWidget(BaseModel):
+    type: Literal["text"] = "text"
+    data: str
+
+class TableWidget(BaseModel):
+    type: Literal["table"] = "table"
+    columns: list[str]
+    rows: list[list]
+
+Widget = Union[TextWidget, TableWidget]  # extend as needed
+```
+
 ## Development
 
 ### Setup Development Environment
