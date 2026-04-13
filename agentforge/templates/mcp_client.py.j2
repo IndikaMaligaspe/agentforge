@@ -4,19 +4,42 @@
 # the upstream changelog before bumping the pin.
 """MCP client for tool integration.
 
-Reads MCP server configuration from the backend settings module
-(backend.config.settings) or from environment variables as fallbacks.
-"""
+MCP server configuration is read from the ``MCP_SERVERS`` environment variable,
+which must be a JSON object mapping server names to connection configs::
 
+    MCP_SERVERS='{"db": {"url": "http://localhost:8001/mcp", "timeout": 30}}'
+
+An optional ``MCP_TIMEOUT`` environment variable sets the default timeout (seconds)
+when a per-server ``timeout`` key is absent. Defaults to 30 seconds.
+"""
+from __future__ import annotations
+
+import json
+import os
 from datetime import timedelta
 
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient, StreamableHttpConnection
 
-from backend.config.settings import settings
-from backend.observability.logging import get_logger
+from observability.logging import get_logger
 
 logger = get_logger("mcp_client")
+
+# ---------------------------------------------------------------------------
+# MCP server configuration — read from environment at module load time.
+# Set MCP_SERVERS to a JSON dict of {"server_name": {"url": "...", "timeout": N}}.
+# ---------------------------------------------------------------------------
+_DEFAULT_TIMEOUT = int(os.environ.get("MCP_TIMEOUT", "30"))
+
+def _load_mcp_servers() -> dict:
+    raw = os.environ.get("MCP_SERVERS", "")
+    if not raw:
+        return {}
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        logger.warning("MCP_SERVERS env var is not valid JSON — ignoring")
+        return {}
 
 
 async def get_mcp_tools(auth_token: str | None = None) -> list[BaseTool]:
@@ -29,16 +52,17 @@ async def get_mcp_tools(auth_token: str | None = None) -> list[BaseTool]:
         List of LangChain BaseTool instances from all reachable MCP servers.
         Returns an empty list when no servers are configured or all fail.
     """
-    if not getattr(settings, "MCP_SERVERS", None):
+    mcp_servers = _load_mcp_servers()
+    if not mcp_servers:
         logger.info("No MCP servers configured — skipping MCP tool load")
         return []
 
     try:
         server_connections: dict[str, StreamableHttpConnection] = {}
 
-        for server_name, server_config in settings.MCP_SERVERS.items():
+        for server_name, server_config in mcp_servers.items():
             url = server_config.get("url")
-            timeout_seconds = server_config.get("timeout", getattr(settings, "MCP_TIMEOUT", 30))
+            timeout_seconds = server_config.get("timeout", _DEFAULT_TIMEOUT)
 
             if not url:
                 logger.warning("No URL configured for MCP server '%s' — skipping", server_name)

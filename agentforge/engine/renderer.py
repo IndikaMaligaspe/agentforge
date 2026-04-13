@@ -64,6 +64,15 @@ def _benchmarks_enabled(c: ProjectConfig) -> bool:
     return c.testing.enable_benchmarks and c.testing.eval_framework == "deepeval"
 
 
+def _has_mcp(c: ProjectConfig) -> bool:
+    """True when any agent tool references an MCP resource."""
+    return any(
+        getattr(tool, "mcp_resource", None)
+        for agent in c.agents
+        for tool in agent.tools
+    )
+
+
 class TemplateRenderer:
     """
     Renders Jinja2 templates using ProjectConfig as the render context.
@@ -334,6 +343,8 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
      lambda c: c.security.auth_type == "jwt"),
     ("__init__.py.j2",                "backend/config/__init__.py",
      lambda c: c.enable_provider_registry or c.workflow.enable_checkpointing),
+    ("__init__.py.j2",                "backend/services/__init__.py",
+     _has_mcp),
     ("__init__.py.j2",                "backend/tests/__init__.py",
      lambda c: c.observability.structured_logging),
     # ── Static (per-project) templates ────────────────────────────────────────
@@ -381,11 +392,7 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
      lambda c: c.development.pre_commit),
     # ── MCP client scaffold ───────────────────────────────────────────────────
     ("mcp_client.py.j2",             "backend/services/mcp_client.py",
-     lambda c: any(
-         getattr(tool, "mcp_resource", None)
-         for agent in c.agents
-         for tool in agent.tools
-     )),
+     _has_mcp),
     # ── LangGraph PostgresSaver checkpointing scaffold ────────────────────────
     ("graph/postgres_with_saver.py.j2",  "backend/graph/checkpointer.py",
      lambda c: c.workflow.enable_checkpointing),

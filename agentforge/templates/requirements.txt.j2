@@ -31,6 +31,22 @@ pyodbc>=5.0.0
 {% elif db_backend == "bigquery" %}
 google-cloud-bigquery>=3.14.0
 {% endif %}
+{% if db_use_alembic %}
+
+# Database migrations
+alembic>=1.13.0
+{% if db_backend == "postgres" %}
+psycopg[binary]>=3.1.0
+{% elif db_backend == "mysql" %}
+pymysql>=1.0.0
+{% endif %}
+{% endif %}
+{% if workflow_enable_checkpointing %}
+
+# LangGraph checkpointing (requires PostgreSQL)
+langgraph-checkpoint-postgres>=1.0.0
+psycopg[binary,pool]>=3.1.0
+{% endif %}
 
 # Observability
 structlog>=24.1.0
@@ -42,6 +58,11 @@ cryptography>=42.0.0
 {% if auth_type == "jwt" %}
 # JWT authentication
 pyjwt[crypto]>=2.9.0,<3.0.0
+{% endif %}
+{% if has_mcp %}
+
+# MCP client — pinned to <0.2.0; see backend/services/mcp_client.py for upgrade notes
+langchain-mcp-adapters>=0.1.0,<0.2.0
 {% endif %}
 
 # Development tools
