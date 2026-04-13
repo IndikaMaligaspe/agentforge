@@ -5,11 +5,10 @@ from __future__ import annotations
 import threading
 from typing import Any
 
-import httpx
 import jwt
 from jwt import PyJWKClient, PyJWKClientError
 
-from backend.security.dtos import AuthError, TokenClaims
+from backend.security.dtos import AuthError
 from backend.security.jwt_settings import JWT_ALGORITHM, JWT_ISSUER, JWT_AUDIENCE, JWKS_URL
 
 # Thread-safe JWKS client cache keyed by URL.
@@ -39,7 +38,7 @@ def verify_token(token: str) -> dict[str, Any]:
     try:
         client = _get_jwks_client(JWKS_URL)
         signing_key = client.get_signing_key_from_jwt(token)
-    except (PyJWKClientError, Exception) as exc:
+    except PyJWKClientError as exc:
         raise AuthError(f"JWKS key resolution failed: {exc}") from exc
 
     options: dict[str, Any] = {}
@@ -68,7 +67,7 @@ from typing import Any
 
 import jwt
 
-from backend.security.dtos import AuthError, TokenClaims
+from backend.security.dtos import AuthError
 from backend.security.jwt_settings import JWT_ALGORITHM, JWT_ISSUER, JWT_AUDIENCE, JWT_SECRET
 
 

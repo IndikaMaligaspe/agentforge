@@ -39,6 +39,10 @@ python-json-logger>=2.0.7
 # Security
 python-multipart>=0.0.7
 cryptography>=42.0.0
+{% if auth_type == "jwt" %}
+# JWT authentication
+pyjwt[crypto]>=2.9.0,<3.0.0
+{% endif %}
 
 # Development tools
 pytest>=8.0.0

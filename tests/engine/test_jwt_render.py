@@ -7,11 +7,14 @@ Covers:
 - Rendered jwt.py compiles without errors.
 - No "madgicx" string (case-insensitive) in any rendered file.
 - .env.example includes JWT_SECRET= for HS256, does NOT for RS256.
-- pyproject.toml includes pyjwt[crypto] only when auth_type == "jwt".
+- requirements.txt includes pyjwt[crypto] only when auth_type == "jwt".
 - jwt.py / jwt_settings.py use template context vars (issuer/audience as
   defaults), not hardcoded strings.
 - backend/security/__init__.py uses the JWT auth_init when auth_type=="jwt"
   (exports verify_token), and the plain __init__ otherwise.
+- backend/security/auth.py absent when auth_type=="jwt", present for api_key.
+- main.py imports verify_token when jwt, get_api_key when api_key.
+- jwt.py has no unused httpx or TokenClaims imports.
 """
 import ast
 import pytest
@@ -240,6 +243,26 @@ def test_env_example_no_jwt_secret_when_auth_type_none():
     assert "JWT_SECRET=" not in env
 
 
+# ── requirements.txt dependencies ─────────────────────────────────────────────
+
+def test_requirements_txt_includes_pyjwt_when_jwt():
+    """requirements.txt must include pyjwt[crypto] when auth_type='jwt'."""
+    rendered = _render_map(_make_config(auth_type="jwt", jwt_algorithm="HS256"))
+    assert "requirements.txt" in rendered
+    req = rendered["requirements.txt"]
+    assert "pyjwt[crypto]" in req, "Expected pyjwt[crypto] in requirements.txt for JWT"
+
+
+def test_requirements_txt_omits_pyjwt_when_not_jwt():
+    """requirements.txt must NOT include pyjwt when auth_type != 'jwt'."""
+    rendered = _render_map(_make_config(auth_type="api_key"))
+    assert "requirements.txt" in rendered
+    req = rendered["requirements.txt"]
+    assert "pyjwt" not in req.lower(), (
+        "pyjwt must not appear in requirements.txt when auth_type is not 'jwt'"
+    )
+
+
 # ── pyproject.toml dependencies ───────────────────────────────────────────────
 
 def test_pyproject_includes_pyjwt_when_jwt():
@@ -249,7 +272,6 @@ def test_pyproject_includes_pyjwt_when_jwt():
     ctx = renderer._build_context(config)
     toml = renderer._env.get_template("pyproject.toml.j2").render(**ctx)
     assert "pyjwt[crypto]" in toml, "Expected pyjwt[crypto] in pyproject.toml for JWT"
-    assert "httpx" in toml, "Expected httpx in pyproject.toml for JWT"
 
 
 def test_pyproject_excludes_pyjwt_when_not_jwt():
@@ -261,6 +283,113 @@ def test_pyproject_excludes_pyjwt_when_not_jwt():
     assert "pyjwt" not in toml.lower(), (
         "pyjwt must not appear in pyproject.toml when auth_type is not 'jwt'"
     )
+
+
+# ── main.py auth import ───────────────────────────────────────────────────────
+
+def test_main_py_uses_verify_token_when_jwt():
+    """Rendered main.py must import verify_token and not get_api_key when auth_type='jwt'."""
+    rendered = _render_map(_make_config(auth_type="jwt", jwt_algorithm="HS256"))
+    main = rendered["backend/main.py"]
+    assert "verify_token" in main, "Expected verify_token import in main.py for JWT"
+    assert "get_api_key" not in main, "get_api_key must not appear in main.py for JWT"
+
+
+def test_main_py_uses_get_api_key_when_api_key():
+    """Rendered main.py must import get_api_key and not verify_token when auth_type='api_key'."""
+    rendered = _render_map(_make_config(auth_type="api_key"))
+    main = rendered["backend/main.py"]
+    assert "get_api_key" in main, "Expected get_api_key import in main.py for api_key"
+    assert "verify_token" not in main, "verify_token must not appear in main.py for api_key"
+
+
+# ── auth.py presence gating ───────────────────────────────────────────────────
+
+def test_auth_py_absent_when_jwt():
+    """backend/security/auth.py must NOT be rendered when auth_type='jwt'."""
+    rendered = _render_map(_make_config(auth_type="jwt", jwt_algorithm="HS256"))
+    assert "backend/security/auth.py" not in rendered, (
+        "backend/security/auth.py must be absent for JWT projects"
+    )
+
+
+def test_auth_py_present_when_api_key():
+    """backend/security/auth.py must be rendered when auth_type='api_key'."""
+    rendered = _render_map(_make_config(auth_type="api_key"))
+    assert "backend/security/auth.py" in rendered, (
+        "backend/security/auth.py must be present for api_key projects"
+    )
+
+
+# ── env.j2 JWT_SECRET block ───────────────────────────────────────────────────
+
+def test_env_includes_jwt_secret_for_hs256():
+    """Rendered .env.example must include JWT_SECRET= when auth_type=jwt and HS256."""
+    rendered = _render_map(_make_config(auth_type="jwt", jwt_algorithm="HS256"))
+    env = rendered[".env.example"]
+    assert "JWT_SECRET=" in env, "Expected JWT_SECRET= in .env.example for HS256"
+
+
+def test_env_excludes_jwt_secret_for_rs256():
+    """Rendered .env.example must NOT include JWT_SECRET= when RS256 (JWKS-based)."""
+    rendered = _render_map(
+        _make_config(
+            auth_type="jwt",
+            jwt_algorithm="RS256",
+            jwks_url="https://example.com/.well-known/jwks.json",
+        )
+    )
+    env = rendered[".env.example"]
+    assert "JWT_SECRET=" not in env, "JWT_SECRET= must be absent for RS256"
+
+
+def test_env_excludes_jwt_secret_for_api_key():
+    """Rendered .env.example must NOT include JWT_SECRET= when auth_type=api_key."""
+    rendered = _render_map(_make_config(auth_type="api_key"))
+    env = rendered[".env.example"]
+    assert "JWT_SECRET=" not in env, "JWT_SECRET= must be absent for api_key"
+
+
+# ── jwt.py unused import check ────────────────────────────────────────────────
+
+def _collect_imported_names(source: str) -> set[str]:
+    """Parse Python source and return all top-level imported names/modules."""
+    tree = ast.parse(source)
+    imported: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                imported.add(alias.name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom):
+            module = node.module or ""
+            imported.add(module.split(".")[0])
+            for alias in node.names:
+                imported.add(alias.name)
+    return imported
+
+
+def test_jwt_py_no_unused_imports_hs256():
+    """Rendered jwt.py (HS256) must not import httpx or TokenClaims."""
+    rendered = _render_map(_make_config(auth_type="jwt", jwt_algorithm="HS256"))
+    source = rendered["backend/security/jwt.py"]
+    imported = _collect_imported_names(source)
+    assert "httpx" not in imported, "httpx must not be imported in jwt.py (HS256)"
+    assert "TokenClaims" not in imported, "TokenClaims must not be imported in jwt.py (HS256)"
+
+
+def test_jwt_py_no_unused_imports_rs256():
+    """Rendered jwt.py (RS256) must not import httpx or TokenClaims."""
+    rendered = _render_map(
+        _make_config(
+            auth_type="jwt",
+            jwt_algorithm="RS256",
+            jwks_url="https://example.com/.well-known/jwks.json",
+        )
+    )
+    source = rendered["backend/security/jwt.py"]
+    imported = _collect_imported_names(source)
+    assert "httpx" not in imported, "httpx must not be imported in jwt.py (RS256)"
+    assert "TokenClaims" not in imported, "TokenClaims must not be imported in jwt.py (RS256)"
 
 
 # ── Settings file context vars ────────────────────────────────────────────────
