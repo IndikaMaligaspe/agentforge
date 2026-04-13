@@ -48,3 +48,8 @@ pyjwt[crypto]>=2.9.0,<3.0.0
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
 httpx>=0.26.0
+{%- if testing_enable_benchmarks and testing_eval_framework == "deepeval" %}
+
+# DeepEval benchmark dependencies
+deepeval>=1.0.0,<3.0.0
+{% endif %}

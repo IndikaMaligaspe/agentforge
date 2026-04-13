@@ -18,6 +18,7 @@ from agentforge.prompts.wizard import (
     step_security,
     step_development,
     step_ci,
+    step_testing,
     build_config,
 )
 from agentforge.schema.models import (
@@ -781,6 +782,11 @@ def test_wizard_all_defaults_produces_valid_config(monkeypatch):
         "installer": "uv",
     })
 
+    monkeypatch.setattr(f"{_WIZARD}.ask_testing_config", lambda: {
+        "eval_framework": "none",
+        "enable_benchmarks": False,
+    })
+
     partial: dict = {}
     partial = step_metadata(partial)
     partial = step_agents(partial)
@@ -791,6 +797,7 @@ def test_wizard_all_defaults_produces_valid_config(monkeypatch):
     partial = step_security(partial)
     partial = step_development(partial)
     partial = step_ci(partial)
+    partial = step_testing(partial)
 
     config = build_config(partial)
 
@@ -807,6 +814,9 @@ def test_wizard_all_defaults_produces_valid_config(monkeypatch):
     assert config.development.pre_commit is False
     # CI defaults to none — the opt-in is off
     assert config.ci.provider == "none"
+    # Testing defaults to none — the opt-in is off
+    assert config.testing.eval_framework == "none"
+    assert config.testing.enable_benchmarks is False
 
 
 # ── Extended database step (TODO-1): backend + use_alembic ────────────────────
@@ -942,3 +952,171 @@ def test_step_workflow_forces_checkpointing_off_for_non_postgres(monkeypatch):
     result = step_workflow(partial)
 
     assert result["workflow"]["enable_checkpointing"] is False
+
+
+# ── step_testing (TODO-7) ─────────────────────────────────────────────────────
+
+def test_step_testing_merges_testing_key(monkeypatch):
+    """step_testing must add 'testing' key and leave other keys untouched."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_testing_config", lambda: {
+        "eval_framework": "none",
+        "enable_benchmarks": False,
+    })
+
+    result = step_testing({"existing": "value"})
+    assert result["existing"] == "value"
+    assert result["testing"]["eval_framework"] == "none"
+    assert result["testing"]["enable_benchmarks"] is False
+
+
+def test_step_testing_does_not_mutate_input(monkeypatch):
+    """step_testing must not mutate the incoming partial dict."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_testing_config", lambda: {
+        "eval_framework": "none",
+        "enable_benchmarks": False,
+    })
+
+    initial = {"metadata": {"name": "x"}}
+    step_testing(initial)
+    assert "testing" not in initial
+
+
+def test_step_testing_deepeval_framework(monkeypatch):
+    """step_testing with eval_framework=deepeval must set testing.eval_framework='deepeval'."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_testing_config", lambda: {
+        "eval_framework": "deepeval",
+        "enable_benchmarks": False,
+    })
+
+    result = step_testing({})
+    assert result["testing"]["eval_framework"] == "deepeval"
+    assert result["testing"]["enable_benchmarks"] is False
+
+
+def test_step_testing_deepeval_with_benchmarks(monkeypatch):
+    """step_testing with deepeval + enable_benchmarks=True produces correct testing dict."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_testing_config", lambda: {
+        "eval_framework": "deepeval",
+        "enable_benchmarks": True,
+    })
+
+    result = step_testing({})
+    assert result["testing"]["eval_framework"] == "deepeval"
+    assert result["testing"]["enable_benchmarks"] is True
+
+
+def test_step_testing_none_framework_preserves_false_benchmarks(monkeypatch):
+    """step_testing with eval_framework=none must always set enable_benchmarks=False."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_testing_config", lambda: {
+        "eval_framework": "none",
+        "enable_benchmarks": False,
+    })
+
+    result = step_testing({"other": 42})
+    assert result["other"] == 42
+    assert result["testing"]["eval_framework"] == "none"
+    assert result["testing"]["enable_benchmarks"] is False
+
+
+def test_build_config_with_deepeval_benchmarks():
+    """build_config must construct a valid ProjectConfig with deepeval benchmarks enabled."""
+    partial = {
+        "metadata": {
+            "name": "bench_proj",
+            "description": "desc",
+            "python_version": "3.11",
+            "author": "A",
+            "email": "a@b.com",
+        },
+        "agents": [_make_agent("sql", "SqlAgent")],
+        "database": {
+            "backend": "postgres",
+            "tables": [],
+            "connection_env_var": "DATABASE_URL",
+            "pool_size": 5,
+            "max_overflow": 10,
+        },
+        "workflow": {
+            "enable_feedback_loop": True,
+            "enable_validation_node": True,
+            "default_intent": "sql",
+            "max_feedback_attempts": 3,
+        },
+        "api": {
+            "title": "Bench API",
+            "query_max_length": 2000,
+            "cors": {"origins": ["*"], "allow_credentials": False},
+        },
+        "observability": {
+            "enable_tracing": False,
+            "tracing_provider": "langfuse",
+            "context_fields": ["request_id"],
+            "log_rotation_bytes": 10_485_760,
+            "log_backup_count": 5,
+        },
+        "security": {
+            "enable_auth": False,
+            "api_key_env_var": "API_KEY",
+            "enable_ip_pseudonymization": False,
+        },
+        "testing": {
+            "eval_framework": "deepeval",
+            "enable_benchmarks": True,
+        },
+    }
+
+    config = build_config(partial)
+
+    assert isinstance(config, ProjectConfig)
+    assert config.testing.eval_framework == "deepeval"
+    assert config.testing.enable_benchmarks is True
+
+
+def test_build_config_testing_defaults_when_absent():
+    """build_config with no 'testing' key in partial must default to eval_framework=none."""
+    partial = {
+        "metadata": {
+            "name": "no_testing_proj",
+            "description": "desc",
+            "python_version": "3.11",
+            "author": "A",
+            "email": "a@b.com",
+        },
+        "agents": [_make_agent("sql", "SqlAgent")],
+        "database": {
+            "backend": "postgres",
+            "tables": [],
+            "connection_env_var": "DATABASE_URL",
+            "pool_size": 5,
+            "max_overflow": 10,
+        },
+        "workflow": {
+            "enable_feedback_loop": True,
+            "enable_validation_node": True,
+            "default_intent": "sql",
+            "max_feedback_attempts": 3,
+        },
+        "api": {
+            "title": "Test API",
+            "query_max_length": 2000,
+            "cors": {"origins": ["*"], "allow_credentials": False},
+        },
+        "observability": {
+            "enable_tracing": False,
+            "tracing_provider": "langfuse",
+            "context_fields": ["request_id"],
+            "log_rotation_bytes": 10_485_760,
+            "log_backup_count": 5,
+        },
+        "security": {
+            "enable_auth": False,
+            "api_key_env_var": "API_KEY",
+            "enable_ip_pseudonymization": False,
+        },
+    }
+
+    config = build_config(partial)
+
+    assert isinstance(config, ProjectConfig)
+    assert config.testing.eval_framework == "none"
+    assert config.testing.enable_benchmarks is False

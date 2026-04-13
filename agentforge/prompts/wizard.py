@@ -13,12 +13,14 @@ from ..schema.models import (
     ProjectConfig, ProjectMetadata, AgentConfig,
     DatabaseConfig, WorkflowConfig, APIConfig,
     ObservabilityConfig, SecurityConfig, CORSConfig, CiConfig, DevelopmentConfig,
+    TestingConfig,
     DBBackend,
 )
 from .questions import (
     ask_agent_config, ask_project_metadata, ask_database_config,
     ask_workflow_config, ask_api_config, ask_observability_config,
-    ask_security_config, ask_ci_config, ask_development_config
+    ask_security_config, ask_ci_config, ask_development_config,
+    ask_testing_config,
 )
 
 console = Console()
@@ -115,6 +117,12 @@ def step_ci(partial: dict) -> dict:
     return {**partial, "ci": ci_dict}
 
 
+def step_testing(partial: dict) -> dict:
+    """Step 10 — Collect testing / eval framework configuration and merge into partial dict."""
+    testing_dict = ask_testing_config()
+    return {**partial, "testing": testing_dict}
+
+
 def build_config(partial: dict) -> ProjectConfig:
     """Construct a validated ProjectConfig from the accumulated partial dict.
 
@@ -130,6 +138,7 @@ def build_config(partial: dict) -> ProjectConfig:
     security_raw = partial.get("security", {})
     ci_raw = partial.get("ci", {})
     development_raw = partial.get("development", {})
+    testing_raw = partial.get("testing", {})
 
     return ProjectConfig(
         metadata=ProjectMetadata(**metadata_raw) if isinstance(metadata_raw, dict) else metadata_raw,
@@ -141,6 +150,7 @@ def build_config(partial: dict) -> ProjectConfig:
         security=SecurityConfig(**security_raw) if isinstance(security_raw, dict) else security_raw,
         ci=CiConfig(**ci_raw) if isinstance(ci_raw, dict) else ci_raw,
         development=DevelopmentConfig(**development_raw) if isinstance(development_raw, dict) else development_raw,
+        testing=TestingConfig(**testing_raw) if isinstance(testing_raw, dict) else testing_raw,
         enable_provider_registry=False,
     )
 
@@ -149,7 +159,7 @@ def build_config(partial: dict) -> ProjectConfig:
 
 def run_wizard() -> ProjectConfig:
     """
-    Run the full 10-step interactive wizard to generate a ProjectConfig.
+    Run the full 11-step interactive wizard to generate a ProjectConfig.
 
     Steps:
     1. Project Metadata
@@ -161,7 +171,8 @@ def run_wizard() -> ProjectConfig:
     7. Security
     8. Development
     9. CI
-    10. Review & Confirm
+    10. Testing
+    11. Review & Confirm
     """
     partial: dict = {}
 
@@ -192,9 +203,12 @@ def run_wizard() -> ProjectConfig:
     console.print("\n[bold]Step 9 — CI[/bold]")
     partial = step_ci(partial)
 
+    console.print("\n[bold]Step 10 — Testing[/bold]")
+    partial = step_testing(partial)
+
     config = build_config(partial)
 
-    console.print("\n[bold]Step 10 — Review & Confirm[/bold]")
+    console.print("\n[bold]Step 11 — Review & Confirm[/bold]")
     _show_summary(config)
 
     confirmed = questionary.confirm("Is this configuration correct?", default=True).ask()
@@ -269,6 +283,12 @@ def _show_summary(config: ProjectConfig) -> None:
         f"Provider: {config.ci.provider}\n"
         f"Python: {config.ci.python_version}\n"
         f"Installer: {config.ci.installer}"
+    )
+
+    table.add_row(
+        "Testing",
+        f"Eval framework: {config.testing.eval_framework}\n"
+        f"Benchmarks: {'Enabled' if config.testing.enable_benchmarks else 'Disabled'}"
     )
 
     console.print(table)

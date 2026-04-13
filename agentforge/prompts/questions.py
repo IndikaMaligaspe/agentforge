@@ -335,3 +335,29 @@ def ask_development_config() -> dict:
         return {"pre_commit": False}
 
     return {"pre_commit": True}
+
+
+def ask_testing_config() -> dict:
+    """Interactive prompt for testing / eval framework configuration.
+
+    Returns a dict with eval_framework (none | deepeval) and enable_benchmarks.
+    The enable_benchmarks question is only asked when eval_framework != 'none'.
+    """
+    eval_framework = questionary.select(
+        "Evaluation framework (opt-in):",
+        choices=["none", "deepeval"],
+        default="none",
+    ).ask()
+
+    if eval_framework == "none":
+        return {"eval_framework": "none", "enable_benchmarks": False}
+
+    enable_benchmarks = questionary.confirm(
+        "Generate DeepEval benchmark scaffold under backend/tests/benchmarks/?",
+        default=False,
+    ).ask()
+
+    return {
+        "eval_framework": eval_framework,
+        "enable_benchmarks": enable_benchmarks,
+    }

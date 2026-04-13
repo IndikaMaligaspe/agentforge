@@ -59,6 +59,11 @@ def _resolve_logging_template(config: ProjectConfig) -> str:
     return "logging.py.j2"
 
 
+def _benchmarks_enabled(c: ProjectConfig) -> bool:
+    """True when DeepEval benchmarks are fully opted in."""
+    return c.testing.enable_benchmarks and c.testing.eval_framework == "deepeval"
+
+
 class TemplateRenderer:
     """
     Renders Jinja2 templates using ProjectConfig as the render context.
@@ -291,6 +296,9 @@ class TemplateRenderer:
         data["ci_installer"]                = config.ci.installer
         # Development tooling aliases
         data["dev_pre_commit"]              = config.development.pre_commit
+        # Testing / benchmark aliases
+        data["testing_enable_benchmarks"]   = config.testing.enable_benchmarks
+        data["testing_eval_framework"]      = config.testing.eval_framework
         # Top-level feature flags
         data["enable_provider_registry"]    = config.enable_provider_registry
         # Computed flag: true when any agent tool references an MCP resource.
@@ -388,4 +396,30 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
      lambda c: c.security.auth_type == "jwt"),
     ("security/jwt_settings.py.j2",  "backend/security/jwt_settings.py",
      lambda c: c.security.auth_type == "jwt"),
+    # ── DeepEval benchmark scaffold ───────────────────────────────────────────
+    # All entries gated on enable_benchmarks=True AND eval_framework="deepeval".
+    # Output under backend/tests/benchmarks/ — mirrors the test layout expected
+    # by pytest when run from the project root.
+    ("__init__.py.j2",                         "backend/tests/__init__.py",
+     _benchmarks_enabled),
+    ("benchmarks/__init__.py.j2",              "backend/tests/benchmarks/__init__.py",
+     _benchmarks_enabled),
+    ("benchmarks/conftest.py.j2",              "backend/tests/benchmarks/conftest.py",
+     _benchmarks_enabled),
+    ("benchmarks/datasets.py.j2",              "backend/tests/benchmarks/datasets.py",
+     _benchmarks_enabled),
+    ("benchmarks/generators.py.j2",            "backend/tests/benchmarks/generators.py",
+     _benchmarks_enabled),
+    ("benchmarks/report_plugin.py.j2",         "backend/tests/benchmarks/report_plugin.py",
+     _benchmarks_enabled),
+    ("benchmarks/runner.py.j2",                "backend/tests/benchmarks/runner.py",
+     _benchmarks_enabled),
+    ("benchmarks/test_graph_agent.py.j2",      "backend/tests/benchmarks/test_graph_agent.py",
+     _benchmarks_enabled),
+    ("benchmarks/trigger_command.py.j2",       "backend/tests/benchmarks/trigger_command.py",
+     _benchmarks_enabled),
+    ("benchmarks/utils.py.j2",                 "backend/tests/benchmarks/utils.py",
+     _benchmarks_enabled),
+    ("benchmarks/base_mcp_mocks.json.j2",      "backend/tests/benchmarks/base_mcp_mocks.json",
+     _benchmarks_enabled),
 ]

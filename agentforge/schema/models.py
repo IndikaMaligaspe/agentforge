@@ -18,6 +18,7 @@ The schema is organized hierarchically:
   - SecurityConfig (auth and sanitization)
   - CiConfig (CI provider settings)
   - DevelopmentConfig (local development tooling)
+  - TestingConfig (eval framework and benchmark options)
 
 Each model includes field-level validation and documentation.
 """
@@ -312,6 +313,31 @@ class DevelopmentConfig(BaseModel):
     pre_commit: bool = Field(False, description="Generate .pre-commit-config.yaml with ruff and common hooks")
 
 
+class TestingConfig(BaseModel):
+    """Opt-in evaluation framework and benchmark scaffold options."""
+    eval_framework: Literal["none", "deepeval"] = Field(
+        "none",
+        description="Evaluation framework to use. 'deepeval' enables the benchmark scaffold.",
+    )
+    enable_benchmarks: bool = Field(
+        False,
+        description=(
+            "Generate DeepEval benchmark scaffold under backend/tests/benchmarks/. "
+            "Requires eval_framework='deepeval'."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def check_benchmarks_require_deepeval(self) -> "TestingConfig":
+        """Benchmarks can only be enabled when an eval framework is selected."""
+        if self.enable_benchmarks and self.eval_framework == "none":
+            raise ValueError(
+                "testing.enable_benchmarks=True requires testing.eval_framework='deepeval'. "
+                "Set eval_framework to 'deepeval' to enable the benchmark scaffold."
+            )
+        return self
+
+
 class ProjectMetadata(BaseModel):
     """Top-level project identity."""
     name: SlugStr = Field(..., description="Python package / GitHub repo name")
@@ -374,6 +400,10 @@ class ProjectConfig(BaseModel):
     development:
       pre_commit: true              # default: false (opt-in)
 
+    testing:
+      eval_framework: deepeval      # default: none (opt-in)
+      enable_benchmarks: true       # default: false (opt-in)
+
     enable_provider_registry: false  # default; set true to generate backend/config/provider_registry.py
     """
     metadata: ProjectMetadata
@@ -385,6 +415,7 @@ class ProjectConfig(BaseModel):
     security: SecurityConfig = Field(default_factory=lambda: SecurityConfig())  # type: ignore[call-arg]
     ci: CiConfig = Field(default_factory=lambda: CiConfig())  # type: ignore[call-arg]
     development: DevelopmentConfig = Field(default_factory=lambda: DevelopmentConfig())  # type: ignore[call-arg]
+    testing: TestingConfig = Field(default_factory=lambda: TestingConfig())  # type: ignore[call-arg]
     enable_provider_registry: bool = Field(
         False,
         description="Generate backend/config/provider_registry.py in the scaffolded project.",
