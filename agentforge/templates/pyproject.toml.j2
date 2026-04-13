@@ -45,6 +45,13 @@ dependencies = [
   "langgraph-checkpoint-postgres>=2.0.0,<3.0.0",
   "psycopg[binary,pool]>=3.2.0,<4.0.0",
   {% endif %}
+  {% if auth_type == "jwt" %}
+  # pyjwt[crypto] provides RS256 support via cryptography package.
+  "pyjwt[crypto]>=2.9.0,<3.0.0",
+  {% endif %}
+  {% if testing_enable_benchmarks and testing_eval_framework == "deepeval" %}
+  "deepeval>=1.0.0,<3.0.0",
+  {% endif %}
   "python-dotenv>=1.0",
   "rich>=13.7",
 ]
@@ -72,3 +79,10 @@ fmt = "ruff format backend/"
 [tool.ruff]
 line-length = 100
 target-version = "py{{ python_version }}"
+{% if testing_enable_benchmarks and testing_eval_framework == "deepeval" %}
+
+[tool.pytest.ini_options]
+markers = [
+  "benchmarks: DeepEval benchmark tests",
+]
+{% endif %}

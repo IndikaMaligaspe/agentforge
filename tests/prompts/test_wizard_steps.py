@@ -18,6 +18,7 @@ from agentforge.prompts.wizard import (
     step_security,
     step_development,
     step_ci,
+    step_testing,
     build_config,
 )
 from agentforge.schema.models import (
@@ -297,6 +298,205 @@ def test_step_security_merges_security_key(monkeypatch):
 
     result = step_security({})
     assert result["security"]["enable_auth"] is False
+
+
+def test_step_security_returns_auth_type_none(monkeypatch):
+    """step_security with auth_type='none' must produce security.auth_type='none'."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_security_config", lambda: {
+        "auth_type": "none",
+        "api_key_env_var": "API_KEY",
+        "jwt_algorithm": None,
+        "jwt_issuer": None,
+        "jwt_audience": None,
+        "jwks_url": None,
+        "enable_ip_pseudonymization": False,
+    })
+
+    result = step_security({})
+    assert result["security"]["auth_type"] == "none"
+
+
+def test_step_security_returns_auth_type_api_key(monkeypatch):
+    """step_security with auth_type='api_key' must produce security.auth_type='api_key'."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_security_config", lambda: {
+        "auth_type": "api_key",
+        "api_key_env_var": "MY_KEY",
+        "jwt_algorithm": None,
+        "jwt_issuer": None,
+        "jwt_audience": None,
+        "jwks_url": None,
+        "enable_ip_pseudonymization": False,
+    })
+
+    result = step_security({})
+    assert result["security"]["auth_type"] == "api_key"
+    assert result["security"]["api_key_env_var"] == "MY_KEY"
+
+
+def test_step_security_returns_auth_type_jwt_hs256(monkeypatch):
+    """step_security with auth_type='jwt'/HS256 must include jwt_algorithm."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_security_config", lambda: {
+        "auth_type": "jwt",
+        "api_key_env_var": "API_KEY",
+        "jwt_algorithm": "HS256",
+        "jwt_issuer": None,
+        "jwt_audience": None,
+        "jwks_url": None,
+        "enable_ip_pseudonymization": False,
+    })
+
+    result = step_security({})
+    assert result["security"]["auth_type"] == "jwt"
+    assert result["security"]["jwt_algorithm"] == "HS256"
+    assert result["security"]["jwks_url"] is None
+
+
+def test_step_security_jwt_rs256_collects_jwks_url(monkeypatch):
+    """JWT path with RS256 must collect jwks_url."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_security_config", lambda: {
+        "auth_type": "jwt",
+        "api_key_env_var": "API_KEY",
+        "jwt_algorithm": "RS256",
+        "jwt_issuer": None,
+        "jwt_audience": None,
+        "jwks_url": "https://example.com/.well-known/jwks.json",
+        "enable_ip_pseudonymization": False,
+    })
+
+    result = step_security({})
+    assert result["security"]["auth_type"] == "jwt"
+    assert result["security"]["jwt_algorithm"] == "RS256"
+    assert result["security"]["jwks_url"] == "https://example.com/.well-known/jwks.json"
+
+
+def test_step_security_jwt_hs256_no_jwks_url(monkeypatch):
+    """JWT path with HS256 must NOT prompt for jwks_url (returns None)."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_security_config", lambda: {
+        "auth_type": "jwt",
+        "api_key_env_var": "API_KEY",
+        "jwt_algorithm": "HS256",
+        "jwt_issuer": None,
+        "jwt_audience": None,
+        "jwks_url": None,
+        "enable_ip_pseudonymization": False,
+    })
+
+    result = step_security({})
+    assert result["security"]["jwt_algorithm"] == "HS256"
+    assert result["security"]["jwks_url"] is None
+
+
+def test_build_config_with_jwt_hs256():
+    """build_config must produce a valid ProjectConfig for JWT/HS256."""
+    partial = {
+        "metadata": {
+            "name": "jwt_proj",
+            "description": "desc",
+            "python_version": "3.11",
+            "author": "A",
+            "email": "a@b.com",
+        },
+        "agents": [_make_agent("sql", "SqlAgent")],
+        "database": {
+            "backend": "postgres",
+            "tables": [],
+            "connection_env_var": "DATABASE_URL",
+            "pool_size": 5,
+            "max_overflow": 10,
+        },
+        "workflow": {
+            "enable_feedback_loop": True,
+            "enable_validation_node": True,
+            "default_intent": "sql",
+            "max_feedback_attempts": 3,
+        },
+        "api": {
+            "title": "JWT API",
+            "query_max_length": 2000,
+            "cors": {"origins": ["*"], "allow_credentials": False},
+        },
+        "observability": {
+            "enable_tracing": False,
+            "tracing_provider": "langfuse",
+            "context_fields": ["request_id"],
+            "log_rotation_bytes": 10_485_760,
+            "log_backup_count": 5,
+        },
+        "security": {
+            "auth_type": "jwt",
+            "api_key_env_var": "API_KEY",
+            "jwt_algorithm": "HS256",
+            "jwt_issuer": None,
+            "jwt_audience": None,
+            "jwks_url": None,
+            "enable_ip_pseudonymization": False,
+        },
+    }
+
+    config = build_config(partial)
+
+    assert isinstance(config, ProjectConfig)
+    assert config.security.auth_type == "jwt"
+    assert config.security.jwt_algorithm == "HS256"
+    assert config.security.enable_auth is True
+
+
+def test_build_config_with_jwt_rs256():
+    """build_config must produce a valid ProjectConfig for JWT/RS256 with jwks_url."""
+    partial = {
+        "metadata": {
+            "name": "jwt_rs256_proj",
+            "description": "desc",
+            "python_version": "3.11",
+            "author": "A",
+            "email": "a@b.com",
+        },
+        "agents": [_make_agent("sql", "SqlAgent")],
+        "database": {
+            "backend": "postgres",
+            "tables": [],
+            "connection_env_var": "DATABASE_URL",
+            "pool_size": 5,
+            "max_overflow": 10,
+        },
+        "workflow": {
+            "enable_feedback_loop": True,
+            "enable_validation_node": True,
+            "default_intent": "sql",
+            "max_feedback_attempts": 3,
+        },
+        "api": {
+            "title": "JWT RS256 API",
+            "query_max_length": 2000,
+            "cors": {"origins": ["*"], "allow_credentials": False},
+        },
+        "observability": {
+            "enable_tracing": False,
+            "tracing_provider": "langfuse",
+            "context_fields": ["request_id"],
+            "log_rotation_bytes": 10_485_760,
+            "log_backup_count": 5,
+        },
+        "security": {
+            "auth_type": "jwt",
+            "api_key_env_var": "API_KEY",
+            "jwt_algorithm": "RS256",
+            "jwt_issuer": "https://auth.example.com/",
+            "jwt_audience": "my-api",
+            "jwks_url": "https://example.com/.well-known/jwks.json",
+            "enable_ip_pseudonymization": False,
+        },
+    }
+
+    config = build_config(partial)
+
+    assert isinstance(config, ProjectConfig)
+    assert config.security.auth_type == "jwt"
+    assert config.security.jwt_algorithm == "RS256"
+    assert config.security.jwks_url == "https://example.com/.well-known/jwks.json"
+    assert config.security.jwt_issuer == "https://auth.example.com/"
+    assert config.security.jwt_audience == "my-api"
+    assert config.security.enable_auth is True
 
 
 # ── step_development ──────────────────────────────────────────────────────────
@@ -582,6 +782,11 @@ def test_wizard_all_defaults_produces_valid_config(monkeypatch):
         "installer": "uv",
     })
 
+    monkeypatch.setattr(f"{_WIZARD}.ask_testing_config", lambda: {
+        "eval_framework": "none",
+        "enable_benchmarks": False,
+    })
+
     partial: dict = {}
     partial = step_metadata(partial)
     partial = step_agents(partial)
@@ -592,6 +797,7 @@ def test_wizard_all_defaults_produces_valid_config(monkeypatch):
     partial = step_security(partial)
     partial = step_development(partial)
     partial = step_ci(partial)
+    partial = step_testing(partial)
 
     config = build_config(partial)
 
@@ -608,6 +814,9 @@ def test_wizard_all_defaults_produces_valid_config(monkeypatch):
     assert config.development.pre_commit is False
     # CI defaults to none — the opt-in is off
     assert config.ci.provider == "none"
+    # Testing defaults to none — the opt-in is off
+    assert config.testing.eval_framework == "none"
+    assert config.testing.enable_benchmarks is False
 
 
 # ── Extended database step (TODO-1): backend + use_alembic ────────────────────
@@ -743,3 +952,171 @@ def test_step_workflow_forces_checkpointing_off_for_non_postgres(monkeypatch):
     result = step_workflow(partial)
 
     assert result["workflow"]["enable_checkpointing"] is False
+
+
+# ── step_testing (TODO-7) ─────────────────────────────────────────────────────
+
+def test_step_testing_merges_testing_key(monkeypatch):
+    """step_testing must add 'testing' key and leave other keys untouched."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_testing_config", lambda: {
+        "eval_framework": "none",
+        "enable_benchmarks": False,
+    })
+
+    result = step_testing({"existing": "value"})
+    assert result["existing"] == "value"
+    assert result["testing"]["eval_framework"] == "none"
+    assert result["testing"]["enable_benchmarks"] is False
+
+
+def test_step_testing_does_not_mutate_input(monkeypatch):
+    """step_testing must not mutate the incoming partial dict."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_testing_config", lambda: {
+        "eval_framework": "none",
+        "enable_benchmarks": False,
+    })
+
+    initial = {"metadata": {"name": "x"}}
+    step_testing(initial)
+    assert "testing" not in initial
+
+
+def test_step_testing_deepeval_framework(monkeypatch):
+    """step_testing with eval_framework=deepeval must set testing.eval_framework='deepeval'."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_testing_config", lambda: {
+        "eval_framework": "deepeval",
+        "enable_benchmarks": False,
+    })
+
+    result = step_testing({})
+    assert result["testing"]["eval_framework"] == "deepeval"
+    assert result["testing"]["enable_benchmarks"] is False
+
+
+def test_step_testing_deepeval_with_benchmarks(monkeypatch):
+    """step_testing with deepeval + enable_benchmarks=True produces correct testing dict."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_testing_config", lambda: {
+        "eval_framework": "deepeval",
+        "enable_benchmarks": True,
+    })
+
+    result = step_testing({})
+    assert result["testing"]["eval_framework"] == "deepeval"
+    assert result["testing"]["enable_benchmarks"] is True
+
+
+def test_step_testing_none_framework_preserves_false_benchmarks(monkeypatch):
+    """step_testing with eval_framework=none must always set enable_benchmarks=False."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_testing_config", lambda: {
+        "eval_framework": "none",
+        "enable_benchmarks": False,
+    })
+
+    result = step_testing({"other": 42})
+    assert result["other"] == 42
+    assert result["testing"]["eval_framework"] == "none"
+    assert result["testing"]["enable_benchmarks"] is False
+
+
+def test_build_config_with_deepeval_benchmarks():
+    """build_config must construct a valid ProjectConfig with deepeval benchmarks enabled."""
+    partial = {
+        "metadata": {
+            "name": "bench_proj",
+            "description": "desc",
+            "python_version": "3.11",
+            "author": "A",
+            "email": "a@b.com",
+        },
+        "agents": [_make_agent("sql", "SqlAgent")],
+        "database": {
+            "backend": "postgres",
+            "tables": [],
+            "connection_env_var": "DATABASE_URL",
+            "pool_size": 5,
+            "max_overflow": 10,
+        },
+        "workflow": {
+            "enable_feedback_loop": True,
+            "enable_validation_node": True,
+            "default_intent": "sql",
+            "max_feedback_attempts": 3,
+        },
+        "api": {
+            "title": "Bench API",
+            "query_max_length": 2000,
+            "cors": {"origins": ["*"], "allow_credentials": False},
+        },
+        "observability": {
+            "enable_tracing": False,
+            "tracing_provider": "langfuse",
+            "context_fields": ["request_id"],
+            "log_rotation_bytes": 10_485_760,
+            "log_backup_count": 5,
+        },
+        "security": {
+            "enable_auth": False,
+            "api_key_env_var": "API_KEY",
+            "enable_ip_pseudonymization": False,
+        },
+        "testing": {
+            "eval_framework": "deepeval",
+            "enable_benchmarks": True,
+        },
+    }
+
+    config = build_config(partial)
+
+    assert isinstance(config, ProjectConfig)
+    assert config.testing.eval_framework == "deepeval"
+    assert config.testing.enable_benchmarks is True
+
+
+def test_build_config_testing_defaults_when_absent():
+    """build_config with no 'testing' key in partial must default to eval_framework=none."""
+    partial = {
+        "metadata": {
+            "name": "no_testing_proj",
+            "description": "desc",
+            "python_version": "3.11",
+            "author": "A",
+            "email": "a@b.com",
+        },
+        "agents": [_make_agent("sql", "SqlAgent")],
+        "database": {
+            "backend": "postgres",
+            "tables": [],
+            "connection_env_var": "DATABASE_URL",
+            "pool_size": 5,
+            "max_overflow": 10,
+        },
+        "workflow": {
+            "enable_feedback_loop": True,
+            "enable_validation_node": True,
+            "default_intent": "sql",
+            "max_feedback_attempts": 3,
+        },
+        "api": {
+            "title": "Test API",
+            "query_max_length": 2000,
+            "cors": {"origins": ["*"], "allow_credentials": False},
+        },
+        "observability": {
+            "enable_tracing": False,
+            "tracing_provider": "langfuse",
+            "context_fields": ["request_id"],
+            "log_rotation_bytes": 10_485_760,
+            "log_backup_count": 5,
+        },
+        "security": {
+            "enable_auth": False,
+            "api_key_env_var": "API_KEY",
+            "enable_ip_pseudonymization": False,
+        },
+    }
+
+    config = build_config(partial)
+
+    assert isinstance(config, ProjectConfig)
+    assert config.testing.eval_framework == "none"
+    assert config.testing.enable_benchmarks is False

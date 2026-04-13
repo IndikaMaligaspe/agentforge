@@ -1,0 +1,26 @@
+"""JWT authentication settings — values read from environment variables."""
+import os
+
+
+# Algorithm used to verify tokens. Matches the value in project.yaml.
+JWT_ALGORITHM: str = os.environ.get("JWT_ALGORITHM", "{{ jwt_algorithm }}")
+
+# Expected issuer claim (iss). Leave blank to skip issuer validation.
+JWT_ISSUER: str | None = os.environ.get(
+    "JWT_ISSUER",
+    {% if jwt_issuer %}"{{ jwt_issuer }}"{% else %}None{% endif %},
+)
+
+# Expected audience claim (aud). Leave blank to skip audience validation.
+JWT_AUDIENCE: str | None = os.environ.get(
+    "JWT_AUDIENCE",
+    {% if jwt_audience %}"{{ jwt_audience }}"{% else %}None{% endif %},
+)
+
+{% if jwt_algorithm == "RS256" %}
+# JWKS endpoint URL — used to fetch the RS256 public keys.
+JWKS_URL: str = os.environ.get("JWKS_URL", "{{ jwks_url }}")
+{% else %}
+# HS256 symmetric secret — set JWT_SECRET in your environment before deploying.
+JWT_SECRET: str = os.environ.get("JWT_SECRET", "")
+{% endif %}

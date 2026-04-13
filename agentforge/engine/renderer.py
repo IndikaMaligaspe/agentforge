@@ -59,6 +59,11 @@ def _resolve_logging_template(config: ProjectConfig) -> str:
     return "logging.py.j2"
 
 
+def _benchmarks_enabled(c: ProjectConfig) -> bool:
+    """True when DeepEval benchmarks are fully opted in."""
+    return c.testing.enable_benchmarks and c.testing.eval_framework == "deepeval"
+
+
 class TemplateRenderer:
     """
     Renders Jinja2 templates using ProjectConfig as the render context.
@@ -235,6 +240,9 @@ class TemplateRenderer:
             templates more readable.
         """
         data = config.model_dump(mode="python")
+        # enable_auth is a property (not a Pydantic field), so inject it explicitly
+        # into both the flat context and the nested security sub-dict.
+        data["security"]["enable_auth"] = config.security.enable_auth
         # Convenience aliases used heavily in templates
         # Metadata aliases
         data["project_name"]                = config.metadata.name
@@ -261,10 +269,16 @@ class TemplateRenderer:
         data["log_rotation_bytes"]          = config.observability.log_rotation_bytes
         data["log_backup_count"]            = config.observability.log_backup_count
         data["structured_logging"]           = config.observability.structured_logging
-        # Security aliases
+        # Security aliases — enable_auth is a property so read from model directly
         data["enable_auth"]                 = config.security.enable_auth
         data["api_key_env_var"]             = config.security.api_key_env_var
         data["enable_ip_pseudonymization"]  = config.security.enable_ip_pseudonymization
+        # JWT-specific aliases (None when auth_type != "jwt")
+        data["auth_type"]                   = config.security.auth_type
+        data["jwt_algorithm"]               = config.security.jwt_algorithm
+        data["jwt_issuer"]                  = config.security.jwt_issuer
+        data["jwt_audience"]                = config.security.jwt_audience
+        data["jwks_url"]                    = config.security.jwks_url
         # API aliases
         data["cors_origins"]                = [str(o) for o in config.api.cors.origins]
         data["query_max_length"]            = config.api.query_max_length
@@ -282,6 +296,9 @@ class TemplateRenderer:
         data["ci_installer"]                = config.ci.installer
         # Development tooling aliases
         data["dev_pre_commit"]              = config.development.pre_commit
+        # Testing / benchmark aliases
+        data["testing_enable_benchmarks"]   = config.testing.enable_benchmarks
+        data["testing_eval_framework"]      = config.testing.eval_framework
         # Top-level feature flags
         data["enable_provider_registry"]    = config.enable_provider_registry
         # Computed flag: true when any agent tool references an MCP resource.
@@ -311,7 +328,10 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
     ("__init__.py.j2",                "backend/graph/nodes/__init__.py"),
     ("__init__.py.j2",                "backend/observability/__init__.py"),
     ("__init__.py.j2",                "backend/middleware/__init__.py"),
-    ("__init__.py.j2",                "backend/security/__init__.py"),
+    ("__init__.py.j2",                "backend/security/__init__.py",
+     lambda c: c.security.auth_type != "jwt"),
+    ("security/auth_init.py.j2",      "backend/security/__init__.py",
+     lambda c: c.security.auth_type == "jwt"),
     ("__init__.py.j2",                "backend/config/__init__.py",
      lambda c: c.enable_provider_registry or c.workflow.enable_checkpointing),
     ("__init__.py.j2",                "backend/tests/__init__.py",
@@ -330,7 +350,8 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
     ("main.py.j2",                  "backend/main.py"),
     (_resolve_logging_template,     "backend/observability/logging.py"),
     ("tracing.py.j2",               "backend/observability/tracing.py"),
-    ("auth.py.j2",                  "backend/security/auth.py"),
+    ("auth.py.j2",                  "backend/security/auth.py",
+     lambda c: c.security.auth_type == "api_key"),
     ("sanitizer.py.j2",             "backend/security/sanitizer.py"),
     ("logging_middleware.py.j2",    "backend/middleware/logging_middleware.py"),
     ("test_structlog_setup.py.j2",   "backend/tests/test_structlog_setup.py",
@@ -368,4 +389,37 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
      lambda c: c.workflow.enable_checkpointing),
     ("config/memory_settings.py.j2",     "backend/config/memory_settings.py",
      lambda c: c.workflow.enable_checkpointing),
+    # ── JWT auth scaffold ─────────────────────────────────────────────────────
+    ("security/jwt.py.j2",           "backend/security/jwt.py",
+     lambda c: c.security.auth_type == "jwt"),
+    ("security/dtos.py.j2",          "backend/security/dtos.py",
+     lambda c: c.security.auth_type == "jwt"),
+    ("security/jwt_settings.py.j2",  "backend/security/jwt_settings.py",
+     lambda c: c.security.auth_type == "jwt"),
+    # ── DeepEval benchmark scaffold ───────────────────────────────────────────
+    # All entries gated on enable_benchmarks=True AND eval_framework="deepeval".
+    # Output under backend/tests/benchmarks/ — mirrors the test layout expected
+    # by pytest when run from the project root.
+    ("__init__.py.j2",                         "backend/tests/__init__.py",
+     _benchmarks_enabled),
+    ("benchmarks/__init__.py.j2",              "backend/tests/benchmarks/__init__.py",
+     _benchmarks_enabled),
+    ("benchmarks/conftest.py.j2",              "backend/tests/benchmarks/conftest.py",
+     _benchmarks_enabled),
+    ("benchmarks/datasets.py.j2",              "backend/tests/benchmarks/datasets.py",
+     _benchmarks_enabled),
+    ("benchmarks/generators.py.j2",            "backend/tests/benchmarks/generators.py",
+     _benchmarks_enabled),
+    ("benchmarks/report_plugin.py.j2",         "backend/tests/benchmarks/report_plugin.py",
+     _benchmarks_enabled),
+    ("benchmarks/runner.py.j2",                "backend/tests/benchmarks/runner.py",
+     _benchmarks_enabled),
+    ("benchmarks/test_graph_agent.py.j2",      "backend/tests/benchmarks/test_graph_agent.py",
+     _benchmarks_enabled),
+    ("benchmarks/trigger_command.py.j2",       "backend/tests/benchmarks/trigger_command.py",
+     _benchmarks_enabled),
+    ("benchmarks/utils.py.j2",                 "backend/tests/benchmarks/utils.py",
+     _benchmarks_enabled),
+    ("benchmarks/base_mcp_mocks.json.j2",      "backend/tests/benchmarks/base_mcp_mocks.json",
+     _benchmarks_enabled),
 ]

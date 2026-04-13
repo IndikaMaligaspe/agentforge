@@ -1,0 +1,23 @@
+import asyncio
+
+import pytest
+
+
+@pytest.fixture(scope="function")
+def event_loop():
+    """
+    Create a new event loop for each test function.
+
+    Ensures each test gets a fresh event loop, which helps prevent conflicts
+    with LiteLLM's background logging tasks that are bound to specific event loops.
+    """
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    yield loop
+
+    pending = asyncio.all_tasks(loop)
+    for task in pending:
+        task.cancel()
+
+    loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+    loop.close()

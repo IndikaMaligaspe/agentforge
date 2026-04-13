@@ -1,0 +1,106 @@
+"""JWT token verification for {{ project_name }}."""
+from __future__ import annotations
+
+{% if jwt_algorithm == "RS256" %}
+import threading
+from typing import Any
+
+import jwt
+from jwt import PyJWKClient, PyJWKClientError
+
+from backend.security.dtos import AuthError
+from backend.security.jwt_settings import JWT_ALGORITHM, JWT_ISSUER, JWT_AUDIENCE, JWKS_URL
+
+# Thread-safe JWKS client cache keyed by URL.
+_jwks_client_lock = threading.Lock()
+_jwks_clients: dict[str, PyJWKClient] = {}
+
+
+def _get_jwks_client(url: str) -> PyJWKClient:
+    """Return a cached PyJWKClient for the given JWKS URL."""
+    if url not in _jwks_clients:
+        with _jwks_client_lock:
+            if url not in _jwks_clients:
+                _jwks_clients[url] = PyJWKClient(url)
+    return _jwks_clients[url]
+
+
+def verify_token(token: str) -> dict[str, Any]:
+    """Verify an RS256 JWT and return its claims.
+
+    Fetches the signing key from the JWKS endpoint keyed by the token's `kid`
+    header. The JWKS client caches the key set in-process to avoid redundant
+    HTTP round-trips.
+
+    Raises:
+        AuthError: If the token is invalid, expired, or the JWKS fetch fails.
+    """
+    try:
+        client = _get_jwks_client(JWKS_URL)
+        signing_key = client.get_signing_key_from_jwt(token)
+    except PyJWKClientError as exc:
+        raise AuthError(f"JWKS key resolution failed: {exc}") from exc
+
+    options: dict[str, Any] = {}
+    decode_kwargs: dict[str, Any] = {
+        "key": signing_key.key,
+        "algorithms": [JWT_ALGORITHM],
+        "options": options,
+    }
+    if JWT_ISSUER:
+        decode_kwargs["issuer"] = JWT_ISSUER
+    if JWT_AUDIENCE:
+        decode_kwargs["audience"] = JWT_AUDIENCE
+
+    try:
+        payload: dict[str, Any] = jwt.decode(token, **decode_kwargs)
+    except jwt.ExpiredSignatureError as exc:
+        raise AuthError("Token has expired.") from exc
+    except jwt.InvalidTokenError as exc:
+        raise AuthError(f"Token is invalid: {exc}") from exc
+
+    return payload
+
+{% else %}
+import os
+from typing import Any
+
+import jwt
+
+from backend.security.dtos import AuthError
+from backend.security.jwt_settings import JWT_ALGORITHM, JWT_ISSUER, JWT_AUDIENCE, JWT_SECRET
+
+
+def verify_token(token: str) -> dict[str, Any]:
+    """Verify an HS256 JWT and return its claims.
+
+    Reads the secret from the JWT_SECRET environment variable (via jwt_settings).
+
+    Raises:
+        AuthError: If JWT_SECRET is not set, or the token is invalid/expired.
+    """
+    secret = JWT_SECRET or os.environ.get("JWT_SECRET", "")
+    if not secret:
+        raise AuthError(
+            "JWT_SECRET environment variable is not set. "
+            "Configure it before starting the server."
+        )
+
+    decode_kwargs: dict[str, Any] = {
+        "key": secret,
+        "algorithms": [JWT_ALGORITHM],
+    }
+    if JWT_ISSUER:
+        decode_kwargs["issuer"] = JWT_ISSUER
+    if JWT_AUDIENCE:
+        decode_kwargs["audience"] = JWT_AUDIENCE
+
+    try:
+        payload: dict[str, Any] = jwt.decode(token, **decode_kwargs)
+    except jwt.ExpiredSignatureError as exc:
+        raise AuthError("Token has expired.") from exc
+    except jwt.InvalidTokenError as exc:
+        raise AuthError(f"Token is invalid: {exc}") from exc
+
+    return payload
+{% endif %}

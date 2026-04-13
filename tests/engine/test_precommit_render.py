@@ -44,7 +44,7 @@ def _make_config(pre_commit: bool) -> ProjectConfig:
         database=DatabaseConfig(backend="postgres"),  # type: ignore[call-arg]
         api=APIConfig(title="Test API"),  # type: ignore[call-arg]
         observability=ObservabilityConfig(enable_tracing=False),  # type: ignore[call-arg]
-        security=SecurityConfig(enable_auth=False),  # type: ignore[call-arg]
+        security=SecurityConfig(),  # type: ignore[call-arg]
         ci=CiConfig(),  # type: ignore[call-arg]
         development=DevelopmentConfig(pre_commit=pre_commit),  # type: ignore[call-arg]
         enable_provider_registry=False,

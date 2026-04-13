@@ -1,0 +1,20 @@
+from functools import partial
+from deepeval.dataset import EvaluationDataset
+
+
+def get_dataset(dataset_name: str) -> EvaluationDataset:
+    """
+    Retrieve a DeepEval dataset by its alias name.
+
+    Args:
+        dataset_name (str): The alias of the dataset to pull.
+
+    Returns:
+        EvaluationDataset: The retrieved dataset.
+    """
+    dataset = EvaluationDataset()
+    dataset.pull(alias=dataset_name)
+    return dataset
+
+
+agent_benchmarks_dataset = partial(get_dataset, dataset_name="agent_dataset")

@@ -18,6 +18,7 @@ The schema is organized hierarchically:
   - SecurityConfig (auth and sanitization)
   - CiConfig (CI provider settings)
   - DevelopmentConfig (local development tooling)
+  - TestingConfig (eval framework and benchmark options)
 
 Each model includes field-level validation and documentation.
 """
@@ -238,12 +239,66 @@ class ObservabilityConfig(BaseModel):
 
 class SecurityConfig(BaseModel):
     """Auth + sanitizer → security/auth.py"""
-    enable_auth: bool = Field(False, description="Require API key on all data endpoints")
+    auth_type: Literal["none", "api_key", "jwt"] = Field(
+        "none",
+        description="Authentication strategy: none (open), api_key, or jwt",
+    )
     api_key_env_var: str = Field("API_KEY", description="Env var holding the secret key")
     enable_ip_pseudonymization: bool = Field(
         False,
         description="Hash client IPs before logging in logging_middleware.py",
     )
+    jwt_algorithm: Literal["HS256", "RS256"] | None = Field(
+        None,
+        description="JWT signing algorithm. Required when auth_type='jwt'.",
+    )
+    jwt_issuer: str | None = Field(
+        None,
+        description="Expected JWT issuer claim (iss). Used as default in generated settings.",
+    )
+    jwt_audience: str | None = Field(
+        None,
+        description="Expected JWT audience claim (aud). Used as default in generated settings.",
+    )
+    jwks_url: str | None = Field(
+        None,
+        description="JWKS endpoint URL. Required when jwt_algorithm='RS256'.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _translate_legacy_enable_auth(cls, data: object) -> object:
+        """Accept the old enable_auth bool field and translate to auth_type for backwards compat."""
+        if not isinstance(data, dict):
+            return data
+        if "enable_auth" in data and "auth_type" not in data:
+            data = dict(data)
+            data["auth_type"] = "api_key" if data.pop("enable_auth") else "none"
+        elif "enable_auth" in data:
+            data = dict(data)
+            data.pop("enable_auth")
+        return data
+
+    @model_validator(mode="after")
+    def _validate_jwt_fields(self) -> "SecurityConfig":
+        """Cross-field validation for JWT auth configuration."""
+        if self.auth_type == "jwt":
+            if self.jwt_algorithm is None:
+                raise ValueError(
+                    "security.jwt_algorithm is required when auth_type='jwt'. "
+                    "Set jwt_algorithm to 'HS256' or 'RS256'."
+                )
+            if self.jwt_algorithm == "RS256" and not self.jwks_url:
+                raise ValueError(
+                    "security.jwks_url is required when jwt_algorithm='RS256'. "
+                    "Provide the JWKS endpoint URL (e.g. https://example.com/.well-known/jwks.json)."
+                )
+        return self
+
+    @property
+    def enable_auth(self) -> bool:
+        """True when auth is active (api_key or jwt). Kept for template backwards compat."""
+        return self.auth_type != "none"
 
 
 class CiConfig(BaseModel):
@@ -256,6 +311,32 @@ class CiConfig(BaseModel):
 class DevelopmentConfig(BaseModel):
     """Local development tooling scaffold options."""
     pre_commit: bool = Field(False, description="Generate .pre-commit-config.yaml with ruff and common hooks")
+
+
+class TestingConfig(BaseModel):
+    """Opt-in evaluation framework and benchmark scaffold options."""
+    __test__ = False  # tell pytest this is not a test class
+    eval_framework: Literal["none", "deepeval"] = Field(
+        "none",
+        description="Evaluation framework to use. 'deepeval' enables the benchmark scaffold.",
+    )
+    enable_benchmarks: bool = Field(
+        False,
+        description=(
+            "Generate DeepEval benchmark scaffold under backend/tests/benchmarks/. "
+            "Requires eval_framework='deepeval'."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def check_benchmarks_require_deepeval(self) -> "TestingConfig":
+        """Benchmarks can only be enabled when an eval framework is selected."""
+        if self.enable_benchmarks and self.eval_framework == "none":
+            raise ValueError(
+                "testing.enable_benchmarks=True requires testing.eval_framework='deepeval'. "
+                "Set eval_framework to 'deepeval' to enable the benchmark scaffold."
+            )
+        return self
 
 
 class ProjectMetadata(BaseModel):
@@ -309,7 +390,7 @@ class ProjectConfig(BaseModel):
       structured_logging: false     # default; set true to use structlog JSON logging
 
     security:
-      enable_auth: true
+      auth_type: api_key
       api_key_env_var: MY_API_KEY
 
     ci:
@@ -319,6 +400,10 @@ class ProjectConfig(BaseModel):
 
     development:
       pre_commit: true              # default: false (opt-in)
+
+    testing:
+      eval_framework: deepeval      # default: none (opt-in)
+      enable_benchmarks: true       # default: false (opt-in)
 
     enable_provider_registry: false  # default; set true to generate backend/config/provider_registry.py
     """
@@ -331,6 +416,7 @@ class ProjectConfig(BaseModel):
     security: SecurityConfig = Field(default_factory=lambda: SecurityConfig())  # type: ignore[call-arg]
     ci: CiConfig = Field(default_factory=lambda: CiConfig())  # type: ignore[call-arg]
     development: DevelopmentConfig = Field(default_factory=lambda: DevelopmentConfig())  # type: ignore[call-arg]
+    testing: TestingConfig = Field(default_factory=lambda: TestingConfig())  # type: ignore[call-arg]
     enable_provider_registry: bool = Field(
         False,
         description="Generate backend/config/provider_registry.py in the scaffolded project.",
