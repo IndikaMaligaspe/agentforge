@@ -114,25 +114,22 @@ def test_ci_python_version_in_rendered_output():
 
 # ── Install step per installer ────────────────────────────────────────────────
 
-def test_uv_install_step_uses_uv_sync():
-    """uv installer must render 'uv sync' in the install dependencies step."""
-    rendered = _render_map(_make_config(provider="github", installer="uv"))
+@pytest.mark.parametrize("installer, expected_command, excluded_string", [
+    ("uv", "uv sync", None),
+    ("pip", "pip install", "uv"),
+    ("poetry", "poetry install", "uv"),
+])
+def test_ci_install_step(installer: str, expected_command: str, excluded_string: str | None):
+    """Each installer must render its expected command; pip and poetry must not contain 'uv'."""
+    rendered = _render_map(_make_config(provider="github", installer=installer))
     content = rendered[CI_OUTPUT_PATH]
-    assert "uv sync" in content
-
-
-def test_pip_install_step_uses_pip_install():
-    """pip installer must render 'pip install' in the install dependencies step."""
-    rendered = _render_map(_make_config(provider="github", installer="pip"))
-    content = rendered[CI_OUTPUT_PATH]
-    assert "pip install" in content
-
-
-def test_poetry_install_step_uses_poetry_install():
-    """poetry installer must render 'poetry install' in the install dependencies step."""
-    rendered = _render_map(_make_config(provider="github", installer="poetry"))
-    content = rendered[CI_OUTPUT_PATH]
-    assert "poetry install" in content
+    assert expected_command in content, (
+        f"Expected '{expected_command}' in CI output for installer={installer}"
+    )
+    if excluded_string is not None:
+        assert excluded_string not in content, (
+            f"'{excluded_string}' must not appear in CI output for installer={installer}"
+        )
 
 
 # ── Install steps are mutually exclusive ─────────────────────────────────────
@@ -159,22 +156,6 @@ def test_uv_installer_has_no_pip_install_command():
     rendered = _render_map(_make_config(provider="github", installer="uv"))
     content = rendered[CI_OUTPUT_PATH]
     assert "pip install" not in content
-
-
-# ── No hardcoded "uv" outside the parameterized install block ─────────────────
-
-def test_pip_output_has_no_uv_string():
-    """The string 'uv' must not appear anywhere in pip-mode output."""
-    rendered = _render_map(_make_config(provider="github", installer="pip"))
-    content = rendered[CI_OUTPUT_PATH]
-    assert "uv" not in content
-
-
-def test_poetry_output_has_no_uv_string():
-    """The string 'uv' must not appear anywhere in poetry-mode output."""
-    rendered = _render_map(_make_config(provider="github", installer="poetry"))
-    content = rendered[CI_OUTPUT_PATH]
-    assert "uv" not in content
 
 
 # ── Lint and test steps always present ───────────────────────────────────────
