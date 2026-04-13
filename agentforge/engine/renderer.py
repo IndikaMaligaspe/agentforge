@@ -360,6 +360,8 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
     ("env.j2",                      ".env.example"),
     ("README.md.j2",                "README.md"),
     ("gitignore.j2",                ".gitignore"),
+    # ── Makefile scaffold ─────────────────────────────────────────────────────────
+    ("Makefile.j2",                  "Makefile"),
     ("provider_registry.py.j2",     "backend/config/provider_registry.py",
      lambda c: c.enable_provider_registry),
     ("providers.yaml.j2",           "backend/config/providers.yaml",
