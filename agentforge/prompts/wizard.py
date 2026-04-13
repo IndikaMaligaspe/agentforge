@@ -12,7 +12,8 @@ from rich.table import Table
 from ..schema.models import (
     ProjectConfig, ProjectMetadata, AgentConfig,
     DatabaseConfig, WorkflowConfig, APIConfig,
-    ObservabilityConfig, SecurityConfig, CORSConfig, CiConfig, DevelopmentConfig
+    ObservabilityConfig, SecurityConfig, CORSConfig, CiConfig, DevelopmentConfig,
+    DBBackend,
 )
 from .questions import (
     ask_agent_config, ask_project_metadata, ask_database_config,
@@ -60,12 +61,21 @@ def step_database(partial: dict) -> dict:
 def step_workflow(partial: dict) -> dict:
     """Step 4 — Collect workflow configuration and merge into partial dict.
 
-    Reads agent_keys from the accumulated partial dict so the workflow step
-    can present the correct default_intent choices.
+    Reads agent_keys and database backend from the accumulated partial dict so
+    the workflow step can present the correct default_intent choices and
+    conditionally ask about checkpointing only when the backend is postgres.
     """
     agents = partial.get("agents", [])
     agent_keys = [a.key for a in agents]
-    workflow_dict = ask_workflow_config(agent_keys)
+
+    # Extract the database backend chosen in step_database.
+    database_raw = partial.get("database", {})
+    if isinstance(database_raw, dict):
+        db_backend = database_raw.get("backend", DBBackend.POSTGRES.value)
+    else:
+        db_backend = getattr(database_raw, "backend", DBBackend.POSTGRES).value
+
+    workflow_dict = ask_workflow_config(agent_keys, db_backend=db_backend)
     return {**partial, "workflow": workflow_dict}
 
 
@@ -219,7 +229,8 @@ def _show_summary(config: ProjectConfig) -> None:
         "Workflow",
         f"Default intent: {config.workflow.default_intent}\n"
         f"Feedback loop: {'Enabled' if config.workflow.enable_feedback_loop else 'Disabled'}\n"
-        f"Validation node: {'Enabled' if config.workflow.enable_validation_node else 'Disabled'}"
+        f"Validation node: {'Enabled' if config.workflow.enable_validation_node else 'Disabled'}\n"
+        f"Checkpointing: {'Enabled' if config.workflow.enable_checkpointing else 'Disabled'}"
     )
 
     table.add_row(

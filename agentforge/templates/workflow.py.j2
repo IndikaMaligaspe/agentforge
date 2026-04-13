@@ -23,6 +23,9 @@ from .nodes.feedback_node import (
     MAX_FEEDBACK_ATTEMPTS,
 )
 {% endif %}
+{% if workflow_enable_checkpointing %}
+from .checkpointer import get_postgres_saver
+{% endif %}
 from observability.logging import get_logger
 import agents  # ensure all @AgentRegistry.register decorators execute
 
@@ -104,7 +107,11 @@ def _build_graph() -> StateGraph:
 # ── Compile once at module load ──────────────────────────────────────────────
 # Risk 2 Mitigation: do NOT attach CallbackHandler() here.
 # Pass it at invoke time via config={"callbacks": [CallbackHandler()]}.
+{% if workflow_enable_checkpointing %}
+_COMPILED_GRAPH = _build_graph().compile(checkpointer=get_postgres_saver())
+{% else %}
 _COMPILED_GRAPH = _build_graph().compile()
+{% endif %}
 logger.info("workflow: graph compiled and cached at startup")
 
 

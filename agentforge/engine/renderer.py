@@ -253,6 +253,7 @@ class TemplateRenderer:
         data["router_llm_model"]            = config.workflow.router_llm_model.value
         data["router_llm_provider"]         = config.workflow.router_llm_provider
         data["max_feedback_attempts"]       = config.workflow.max_feedback_attempts
+        data["workflow_enable_checkpointing"] = config.workflow.enable_checkpointing
         # Observability aliases
         data["enable_tracing"]              = config.observability.enable_tracing
         data["tracing_provider"]            = config.observability.tracing_provider
@@ -312,7 +313,7 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
     ("__init__.py.j2",                "backend/middleware/__init__.py"),
     ("__init__.py.j2",                "backend/security/__init__.py"),
     ("__init__.py.j2",                "backend/config/__init__.py",
-     lambda c: c.enable_provider_registry),
+     lambda c: c.enable_provider_registry or c.workflow.enable_checkpointing),
     ("__init__.py.j2",                "backend/tests/__init__.py",
      lambda c: c.observability.structured_logging),
     # ── Static (per-project) templates ────────────────────────────────────────
@@ -362,4 +363,9 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
          for agent in c.agents
          for tool in agent.tools
      )),
+    # ── LangGraph PostgresSaver checkpointing scaffold ────────────────────────
+    ("graph/postgres_with_saver.py.j2",  "backend/graph/checkpointer.py",
+     lambda c: c.workflow.enable_checkpointing),
+    ("config/memory_settings.py.j2",     "backend/config/memory_settings.py",
+     lambda c: c.workflow.enable_checkpointing),
 ]

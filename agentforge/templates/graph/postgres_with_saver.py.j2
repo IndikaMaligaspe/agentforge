@@ -1,0 +1,57 @@
+{# graph/postgres_with_saver.py.j2 - PostgreSQL-backed LangGraph checkpointer #}
+"""
+checkpointer.py — Async PostgreSQL saver for LangGraph checkpoint persistence.
+
+This module owns the lifecycle of the AsyncPostgresSaver used to persist
+graph state across invocations.  Import :func:`get_postgres_saver` wherever
+a compiled graph needs ``checkpointer=``.
+
+Call :func:`setup_checkpoint_tables` once during application startup (e.g.
+from the FastAPI lifespan handler) to ensure the required checkpoint schema
+exists in the database.
+"""
+from __future__ import annotations
+
+import logging
+
+from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
+from backend.config.memory_settings import DATABASE_URL
+
+logger = logging.getLogger(__name__)
+
+# Module-level singletons — initialised lazily on first call to
+# get_postgres_saver().  Using module globals avoids repeated connection
+# setup across calls without introducing a class.
+_postgres_saver: AsyncPostgresSaver | None = None
+
+
+def _create_saver() -> AsyncPostgresSaver:
+    """Construct the AsyncPostgresSaver from the project connection string."""
+    logger.info("Initialising AsyncPostgresSaver for LangGraph checkpointing")
+    return AsyncPostgresSaver.from_conn_string(DATABASE_URL)
+
+
+def get_postgres_saver() -> AsyncPostgresSaver:
+    """Return the module-level AsyncPostgresSaver singleton.
+
+    Creates the saver on first call; subsequent calls return the cached
+    instance.
+    """
+    global _postgres_saver
+    if _postgres_saver is None:
+        _postgres_saver = _create_saver()
+    return _postgres_saver
+
+
+async def setup_checkpoint_tables() -> None:
+    """Create the LangGraph checkpoint tables if they do not already exist.
+
+    This is idempotent — safe to call on every application startup.
+    Call this from your FastAPI ``lifespan`` handler **before** the first
+    graph invocation.
+    """
+    logger.info("Setting up LangGraph checkpoint tables")
+    saver = get_postgres_saver()
+    await saver.setup()
+    logger.info("Checkpoint tables ready")
