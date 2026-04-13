@@ -135,8 +135,15 @@ def ask_database_config():
         "use_alembic": use_alembic,
     }
 
-def ask_workflow_config(agent_keys: list[str]):
-    """Interactive prompt for workflow configuration."""
+def ask_workflow_config(agent_keys: list[str], db_backend: str = "postgres") -> dict:
+    """Interactive prompt for workflow configuration.
+
+    Args:
+        agent_keys: Available agent keys for default_intent selection.
+        db_backend: The database backend value from the accumulated partial dict.
+            The enable_checkpointing question is only asked when this is 'postgres';
+            for any other backend the flag is silently set to False.
+    """
     enable_feedback_loop = questionary.confirm(
         "Enable feedback loop?",
         default=True,
@@ -159,11 +166,21 @@ def ask_workflow_config(agent_keys: list[str]):
         validate=lambda v: v.isdigit() and 1 <= int(v) <= 10 or "Must be a number between 1 and 10",
     ).ask()
 
+    # Checkpointing requires postgres — skip the question entirely for other backends.
+    if db_backend == DBBackend.POSTGRES.value:
+        enable_checkpointing = questionary.confirm(
+            "Enable LangGraph PostgresSaver checkpointing? (requires postgres)",
+            default=False,
+        ).ask()
+    else:
+        enable_checkpointing = False
+
     return {
         "enable_feedback_loop": enable_feedback_loop,
         "enable_validation_node": enable_validation_node,
         "default_intent": default_intent,
         "max_feedback_attempts": int(max_feedback_attempts),
+        "enable_checkpointing": enable_checkpointing,
     }
 
 def ask_api_config():

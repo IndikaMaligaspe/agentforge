@@ -169,6 +169,13 @@ class WorkflowConfig(BaseModel):
         description="Fallback intent when router cannot classify query",
     )
     max_feedback_attempts: int = Field(3, ge=1, le=10)
+    enable_checkpointing: bool = Field(
+        False,
+        description=(
+            "Persist LangGraph state via AsyncPostgresSaver. "
+            "Requires database.backend='postgres'."
+        ),
+    )
 
     @model_validator(mode="after")
     def warn_provider_model_mismatch(self) -> "WorkflowConfig":
@@ -371,5 +378,27 @@ class ProjectConfig(BaseModel):
         if needs and not self.workflow.enable_validation_node:
             raise ValueError(
                 "workflow.enable_validation_node must be True when any agent has needs_validation=True"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def check_checkpointing_requires_postgres(self) -> "ProjectConfig":
+        """
+        Enforce that LangGraph checkpointing is only enabled with a PostgreSQL backend.
+
+        AsyncPostgresSaver is hard-wired to PostgreSQL; attempting to use it with
+        sqlite, mysql, or any other backend will fail at runtime.  Reject the
+        configuration early with an actionable message.
+
+        Returns:
+            The validated ProjectConfig instance
+
+        Raises:
+            ValueError: If enable_checkpointing is True and database.backend is not postgres
+        """
+        if self.workflow.enable_checkpointing and self.database.backend != DBBackend.POSTGRES:
+            raise ValueError(
+                f"workflow.enable_checkpointing requires database.backend='postgres' "
+                f"(got '{self.database.backend.value}')"
             )
         return self
