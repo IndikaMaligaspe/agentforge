@@ -250,9 +250,12 @@ def _show_summary(config: ProjectConfig) -> None:
         f"Tracing: {'Enabled' if config.observability.enable_tracing else 'Disabled'}"
     )
 
+    auth_detail = f"Auth type: {config.security.auth_type}"
+    if config.security.auth_type == "jwt":
+        auth_detail += f"\nJWT algorithm: {config.security.jwt_algorithm}"
     table.add_row(
         "Security",
-        f"Auth: {'Enabled' if config.security.enable_auth else 'Disabled'}\n"
+        f"{auth_detail}\n"
         f"IP pseudonymization: {'Enabled' if config.security.enable_ip_pseudonymization else 'Disabled'}"
     )
 

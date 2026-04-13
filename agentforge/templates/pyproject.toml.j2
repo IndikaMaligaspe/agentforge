@@ -45,6 +45,12 @@ dependencies = [
   "langgraph-checkpoint-postgres>=2.0.0,<3.0.0",
   "psycopg[binary,pool]>=3.2.0,<4.0.0",
   {% endif %}
+  {% if auth_type == "jwt" %}
+  # pyjwt[crypto] provides RS256 support via cryptography package.
+  "pyjwt[crypto]>=2.9.0,<3.0.0",
+  # httpx used for JWKS endpoint fetch (RS256 key resolution).
+  "httpx>=0.27.0,<1.0.0",
+  {% endif %}
   "python-dotenv>=1.0",
   "rich>=13.7",
 ]

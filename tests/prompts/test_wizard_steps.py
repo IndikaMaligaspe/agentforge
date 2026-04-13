@@ -299,6 +299,205 @@ def test_step_security_merges_security_key(monkeypatch):
     assert result["security"]["enable_auth"] is False
 
 
+def test_step_security_returns_auth_type_none(monkeypatch):
+    """step_security with auth_type='none' must produce security.auth_type='none'."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_security_config", lambda: {
+        "auth_type": "none",
+        "api_key_env_var": "API_KEY",
+        "jwt_algorithm": None,
+        "jwt_issuer": None,
+        "jwt_audience": None,
+        "jwks_url": None,
+        "enable_ip_pseudonymization": False,
+    })
+
+    result = step_security({})
+    assert result["security"]["auth_type"] == "none"
+
+
+def test_step_security_returns_auth_type_api_key(monkeypatch):
+    """step_security with auth_type='api_key' must produce security.auth_type='api_key'."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_security_config", lambda: {
+        "auth_type": "api_key",
+        "api_key_env_var": "MY_KEY",
+        "jwt_algorithm": None,
+        "jwt_issuer": None,
+        "jwt_audience": None,
+        "jwks_url": None,
+        "enable_ip_pseudonymization": False,
+    })
+
+    result = step_security({})
+    assert result["security"]["auth_type"] == "api_key"
+    assert result["security"]["api_key_env_var"] == "MY_KEY"
+
+
+def test_step_security_returns_auth_type_jwt_hs256(monkeypatch):
+    """step_security with auth_type='jwt'/HS256 must include jwt_algorithm."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_security_config", lambda: {
+        "auth_type": "jwt",
+        "api_key_env_var": "API_KEY",
+        "jwt_algorithm": "HS256",
+        "jwt_issuer": None,
+        "jwt_audience": None,
+        "jwks_url": None,
+        "enable_ip_pseudonymization": False,
+    })
+
+    result = step_security({})
+    assert result["security"]["auth_type"] == "jwt"
+    assert result["security"]["jwt_algorithm"] == "HS256"
+    assert result["security"]["jwks_url"] is None
+
+
+def test_step_security_jwt_rs256_collects_jwks_url(monkeypatch):
+    """JWT path with RS256 must collect jwks_url."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_security_config", lambda: {
+        "auth_type": "jwt",
+        "api_key_env_var": "API_KEY",
+        "jwt_algorithm": "RS256",
+        "jwt_issuer": None,
+        "jwt_audience": None,
+        "jwks_url": "https://example.com/.well-known/jwks.json",
+        "enable_ip_pseudonymization": False,
+    })
+
+    result = step_security({})
+    assert result["security"]["auth_type"] == "jwt"
+    assert result["security"]["jwt_algorithm"] == "RS256"
+    assert result["security"]["jwks_url"] == "https://example.com/.well-known/jwks.json"
+
+
+def test_step_security_jwt_hs256_no_jwks_url(monkeypatch):
+    """JWT path with HS256 must NOT prompt for jwks_url (returns None)."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_security_config", lambda: {
+        "auth_type": "jwt",
+        "api_key_env_var": "API_KEY",
+        "jwt_algorithm": "HS256",
+        "jwt_issuer": None,
+        "jwt_audience": None,
+        "jwks_url": None,
+        "enable_ip_pseudonymization": False,
+    })
+
+    result = step_security({})
+    assert result["security"]["jwt_algorithm"] == "HS256"
+    assert result["security"]["jwks_url"] is None
+
+
+def test_build_config_with_jwt_hs256():
+    """build_config must produce a valid ProjectConfig for JWT/HS256."""
+    partial = {
+        "metadata": {
+            "name": "jwt_proj",
+            "description": "desc",
+            "python_version": "3.11",
+            "author": "A",
+            "email": "a@b.com",
+        },
+        "agents": [_make_agent("sql", "SqlAgent")],
+        "database": {
+            "backend": "postgres",
+            "tables": [],
+            "connection_env_var": "DATABASE_URL",
+            "pool_size": 5,
+            "max_overflow": 10,
+        },
+        "workflow": {
+            "enable_feedback_loop": True,
+            "enable_validation_node": True,
+            "default_intent": "sql",
+            "max_feedback_attempts": 3,
+        },
+        "api": {
+            "title": "JWT API",
+            "query_max_length": 2000,
+            "cors": {"origins": ["*"], "allow_credentials": False},
+        },
+        "observability": {
+            "enable_tracing": False,
+            "tracing_provider": "langfuse",
+            "context_fields": ["request_id"],
+            "log_rotation_bytes": 10_485_760,
+            "log_backup_count": 5,
+        },
+        "security": {
+            "auth_type": "jwt",
+            "api_key_env_var": "API_KEY",
+            "jwt_algorithm": "HS256",
+            "jwt_issuer": None,
+            "jwt_audience": None,
+            "jwks_url": None,
+            "enable_ip_pseudonymization": False,
+        },
+    }
+
+    config = build_config(partial)
+
+    assert isinstance(config, ProjectConfig)
+    assert config.security.auth_type == "jwt"
+    assert config.security.jwt_algorithm == "HS256"
+    assert config.security.enable_auth is True
+
+
+def test_build_config_with_jwt_rs256():
+    """build_config must produce a valid ProjectConfig for JWT/RS256 with jwks_url."""
+    partial = {
+        "metadata": {
+            "name": "jwt_rs256_proj",
+            "description": "desc",
+            "python_version": "3.11",
+            "author": "A",
+            "email": "a@b.com",
+        },
+        "agents": [_make_agent("sql", "SqlAgent")],
+        "database": {
+            "backend": "postgres",
+            "tables": [],
+            "connection_env_var": "DATABASE_URL",
+            "pool_size": 5,
+            "max_overflow": 10,
+        },
+        "workflow": {
+            "enable_feedback_loop": True,
+            "enable_validation_node": True,
+            "default_intent": "sql",
+            "max_feedback_attempts": 3,
+        },
+        "api": {
+            "title": "JWT RS256 API",
+            "query_max_length": 2000,
+            "cors": {"origins": ["*"], "allow_credentials": False},
+        },
+        "observability": {
+            "enable_tracing": False,
+            "tracing_provider": "langfuse",
+            "context_fields": ["request_id"],
+            "log_rotation_bytes": 10_485_760,
+            "log_backup_count": 5,
+        },
+        "security": {
+            "auth_type": "jwt",
+            "api_key_env_var": "API_KEY",
+            "jwt_algorithm": "RS256",
+            "jwt_issuer": "https://auth.example.com/",
+            "jwt_audience": "my-api",
+            "jwks_url": "https://example.com/.well-known/jwks.json",
+            "enable_ip_pseudonymization": False,
+        },
+    }
+
+    config = build_config(partial)
+
+    assert isinstance(config, ProjectConfig)
+    assert config.security.auth_type == "jwt"
+    assert config.security.jwt_algorithm == "RS256"
+    assert config.security.jwks_url == "https://example.com/.well-known/jwks.json"
+    assert config.security.jwt_issuer == "https://auth.example.com/"
+    assert config.security.jwt_audience == "my-api"
+    assert config.security.enable_auth is True
+
+
 # ── step_development ──────────────────────────────────────────────────────────
 
 def test_step_development_merges_development_key(monkeypatch):

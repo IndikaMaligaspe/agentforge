@@ -83,7 +83,7 @@ observability:
   structured_logging: false
 
 security:
-  enable_auth: true
+  auth_type: api_key
   api_key_env_var: API_SECRET_KEY
   enable_ip_pseudonymization: true
 

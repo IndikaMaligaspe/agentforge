@@ -230,17 +230,55 @@ def ask_observability_config():
         "log_backup_count": 5,
     }
 
-def ask_security_config():
-    """Interactive prompt for security configuration."""
-    enable_auth = questionary.confirm(
-        "Enable authentication?",
-        default=False,
+def ask_security_config() -> dict:
+    """Interactive prompt for security configuration.
+
+    Returns a dict with auth_type (none | api_key | jwt) and related fields.
+    JWT path prompts for algorithm (HS256/RS256), optional issuer/audience,
+    and required jwks_url when RS256.
+    """
+    auth_type = questionary.select(
+        "Authentication type:",
+        choices=["none", "api_key", "jwt"],
+        default="none",
     ).ask()
 
-    api_key_env_var = questionary.text(
-        "API key environment variable:",
-        default="API_KEY",
-    ).ask() if enable_auth else "API_KEY"
+    api_key_env_var = "API_KEY"
+    jwt_algorithm = None
+    jwt_issuer = None
+    jwt_audience = None
+    jwks_url = None
+
+    if auth_type == "api_key":
+        api_key_env_var = questionary.text(
+            "API key environment variable:",
+            default="API_KEY",
+        ).ask()
+
+    elif auth_type == "jwt":
+        jwt_algorithm = questionary.select(
+            "JWT algorithm:",
+            choices=["HS256", "RS256"],
+            default="HS256",
+        ).ask()
+
+        jwt_issuer_raw = questionary.text(
+            "JWT issuer (iss claim, optional — leave blank to skip):",
+            default="",
+        ).ask()
+        jwt_issuer = jwt_issuer_raw.strip() or None
+
+        jwt_audience_raw = questionary.text(
+            "JWT audience (aud claim, optional — leave blank to skip):",
+            default="",
+        ).ask()
+        jwt_audience = jwt_audience_raw.strip() or None
+
+        if jwt_algorithm == "RS256":
+            jwks_url = questionary.text(
+                "JWKS endpoint URL (required for RS256):",
+                validate=lambda v: bool(v.strip()) or "JWKS URL is required for RS256",
+            ).ask()
 
     enable_ip_pseudonymization = questionary.confirm(
         "Enable IP pseudonymization?",
@@ -248,8 +286,12 @@ def ask_security_config():
     ).ask()
 
     return {
-        "enable_auth": enable_auth,
+        "auth_type": auth_type,
         "api_key_env_var": api_key_env_var,
+        "jwt_algorithm": jwt_algorithm,
+        "jwt_issuer": jwt_issuer,
+        "jwt_audience": jwt_audience,
+        "jwks_url": jwks_url,
         "enable_ip_pseudonymization": enable_ip_pseudonymization,
     }
 

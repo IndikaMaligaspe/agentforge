@@ -235,6 +235,9 @@ class TemplateRenderer:
             templates more readable.
         """
         data = config.model_dump(mode="python")
+        # enable_auth is a property (not a Pydantic field), so inject it explicitly
+        # into both the flat context and the nested security sub-dict.
+        data["security"]["enable_auth"] = config.security.enable_auth
         # Convenience aliases used heavily in templates
         # Metadata aliases
         data["project_name"]                = config.metadata.name
@@ -261,10 +264,16 @@ class TemplateRenderer:
         data["log_rotation_bytes"]          = config.observability.log_rotation_bytes
         data["log_backup_count"]            = config.observability.log_backup_count
         data["structured_logging"]           = config.observability.structured_logging
-        # Security aliases
+        # Security aliases — enable_auth is a property so read from model directly
         data["enable_auth"]                 = config.security.enable_auth
         data["api_key_env_var"]             = config.security.api_key_env_var
         data["enable_ip_pseudonymization"]  = config.security.enable_ip_pseudonymization
+        # JWT-specific aliases (None when auth_type != "jwt")
+        data["auth_type"]                   = config.security.auth_type
+        data["jwt_algorithm"]               = config.security.jwt_algorithm
+        data["jwt_issuer"]                  = config.security.jwt_issuer
+        data["jwt_audience"]                = config.security.jwt_audience
+        data["jwks_url"]                    = config.security.jwks_url
         # API aliases
         data["cors_origins"]                = [str(o) for o in config.api.cors.origins]
         data["query_max_length"]            = config.api.query_max_length
@@ -311,7 +320,10 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
     ("__init__.py.j2",                "backend/graph/nodes/__init__.py"),
     ("__init__.py.j2",                "backend/observability/__init__.py"),
     ("__init__.py.j2",                "backend/middleware/__init__.py"),
-    ("__init__.py.j2",                "backend/security/__init__.py"),
+    ("__init__.py.j2",                "backend/security/__init__.py",
+     lambda c: c.security.auth_type != "jwt"),
+    ("security/auth_init.py.j2",      "backend/security/__init__.py",
+     lambda c: c.security.auth_type == "jwt"),
     ("__init__.py.j2",                "backend/config/__init__.py",
      lambda c: c.enable_provider_registry or c.workflow.enable_checkpointing),
     ("__init__.py.j2",                "backend/tests/__init__.py",
@@ -368,4 +380,11 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
      lambda c: c.workflow.enable_checkpointing),
     ("config/memory_settings.py.j2",     "backend/config/memory_settings.py",
      lambda c: c.workflow.enable_checkpointing),
+    # ── JWT auth scaffold ─────────────────────────────────────────────────────
+    ("security/jwt.py.j2",           "backend/security/jwt.py",
+     lambda c: c.security.auth_type == "jwt"),
+    ("security/dtos.py.j2",          "backend/security/dtos.py",
+     lambda c: c.security.auth_type == "jwt"),
+    ("security/jwt_settings.py.j2",  "backend/security/jwt_settings.py",
+     lambda c: c.security.auth_type == "jwt"),
 ]
