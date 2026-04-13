@@ -275,6 +275,10 @@ class TemplateRenderer:
         data["db_pool_size"]                = config.database.pool_size
         # Database migration aliases
         data["db_use_alembic"]               = config.database.use_alembic
+        # CI aliases — prefixed with ci_ to avoid shadowing metadata.python_version
+        data["ci_provider"]                 = config.ci.provider
+        data["ci_python_version"]           = config.ci.python_version
+        data["ci_installer"]                = config.ci.installer
         # Top-level feature flags
         data["enable_provider_registry"]    = config.enable_provider_registry
         return data
@@ -336,4 +340,7 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
      lambda c: c.database.use_alembic),
     ("alembic/script.py.mako.j2",    "backend/migrations/script.py.mako",
      lambda c: c.database.use_alembic),
+    # ── GitHub Actions CI scaffold ────────────────────────────────────────────
+    ("ci/github_ci.yml.j2",          ".github/workflows/ci.yml",
+     lambda c: c.ci.provider == "github"),
 ]

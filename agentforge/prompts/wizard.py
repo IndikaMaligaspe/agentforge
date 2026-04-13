@@ -12,12 +12,12 @@ from rich.table import Table
 from ..schema.models import (
     ProjectConfig, ProjectMetadata, AgentConfig,
     DatabaseConfig, WorkflowConfig, APIConfig,
-    ObservabilityConfig, SecurityConfig, CORSConfig
+    ObservabilityConfig, SecurityConfig, CORSConfig, CiConfig
 )
 from .questions import (
     ask_agent_config, ask_project_metadata, ask_database_config,
     ask_workflow_config, ask_api_config, ask_observability_config,
-    ask_security_config
+    ask_security_config, ask_ci_config
 )
 
 console = Console()
@@ -87,6 +87,12 @@ def step_security(partial: dict) -> dict:
     return {**partial, "security": security_dict}
 
 
+def step_ci(partial: dict) -> dict:
+    """Step 8 — Collect CI configuration and merge into partial dict."""
+    ci_dict = ask_ci_config()
+    return {**partial, "ci": ci_dict}
+
+
 def build_config(partial: dict) -> ProjectConfig:
     """Construct a validated ProjectConfig from the accumulated partial dict.
 
@@ -100,6 +106,7 @@ def build_config(partial: dict) -> ProjectConfig:
     api_raw = partial.get("api", {})
     observability_raw = partial.get("observability", {})
     security_raw = partial.get("security", {})
+    ci_raw = partial.get("ci", {})
 
     return ProjectConfig(
         metadata=ProjectMetadata(**metadata_raw) if isinstance(metadata_raw, dict) else metadata_raw,
@@ -109,6 +116,7 @@ def build_config(partial: dict) -> ProjectConfig:
         api=APIConfig(**api_raw) if isinstance(api_raw, dict) else api_raw,
         observability=ObservabilityConfig(**observability_raw) if isinstance(observability_raw, dict) else observability_raw,
         security=SecurityConfig(**security_raw) if isinstance(security_raw, dict) else security_raw,
+        ci=CiConfig(**ci_raw) if isinstance(ci_raw, dict) else ci_raw,
         enable_provider_registry=False,
     )
 
@@ -117,7 +125,7 @@ def build_config(partial: dict) -> ProjectConfig:
 
 def run_wizard() -> ProjectConfig:
     """
-    Run the full 8-step interactive wizard to generate a ProjectConfig.
+    Run the full 9-step interactive wizard to generate a ProjectConfig.
 
     Steps:
     1. Project Metadata
@@ -127,7 +135,8 @@ def run_wizard() -> ProjectConfig:
     5. API
     6. Observability
     7. Security
-    8. Review & Confirm
+    8. CI
+    9. Review & Confirm
     """
     partial: dict = {}
 
@@ -152,9 +161,12 @@ def run_wizard() -> ProjectConfig:
     console.print("\n[bold]Step 7 — Security[/bold]")
     partial = step_security(partial)
 
+    console.print("\n[bold]Step 8 — CI[/bold]")
+    partial = step_ci(partial)
+
     config = build_config(partial)
 
-    console.print("\n[bold]Step 8 — Review & Confirm[/bold]")
+    console.print("\n[bold]Step 9 — Review & Confirm[/bold]")
     _show_summary(config)
 
     confirmed = questionary.confirm("Is this configuration correct?", default=True).ask()
@@ -213,6 +225,13 @@ def _show_summary(config: ProjectConfig) -> None:
         "Security",
         f"Auth: {'Enabled' if config.security.enable_auth else 'Disabled'}\n"
         f"IP pseudonymization: {'Enabled' if config.security.enable_ip_pseudonymization else 'Disabled'}"
+    )
+
+    table.add_row(
+        "CI",
+        f"Provider: {config.ci.provider}\n"
+        f"Python: {config.ci.python_version}\n"
+        f"Installer: {config.ci.installer}"
     )
 
     console.print(table)

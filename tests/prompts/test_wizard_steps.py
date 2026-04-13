@@ -16,6 +16,7 @@ from agentforge.prompts.wizard import (
     step_api,
     step_observability,
     step_security,
+    step_ci,
     build_config,
 )
 from agentforge.schema.models import (
@@ -239,6 +240,73 @@ def test_step_security_merges_security_key(monkeypatch):
     assert result["security"]["enable_auth"] is False
 
 
+# ── step_ci ───────────────────────────────────────────────────────────────────
+
+def test_step_ci_merges_ci_key(monkeypatch):
+    """step_ci must add 'ci' key and leave other keys untouched."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_ci_config", lambda: {
+        "provider": "github",
+        "python_version": "3.12",
+        "installer": "uv",
+    })
+
+    result = step_ci({"existing": "value"})
+    assert result["existing"] == "value"
+    assert result["ci"]["provider"] == "github"
+    assert result["ci"]["python_version"] == "3.12"
+    assert result["ci"]["installer"] == "uv"
+
+
+def test_step_ci_does_not_mutate_input(monkeypatch):
+    """step_ci must not mutate the incoming partial dict."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_ci_config", lambda: {
+        "provider": "none",
+        "python_version": "3.12",
+        "installer": "uv",
+    })
+
+    initial = {"metadata": {"name": "x"}}
+    step_ci(initial)
+    assert "ci" not in initial
+
+
+def test_step_ci_provider_none_default(monkeypatch):
+    """step_ci with provider=none must produce ci.provider == 'none'."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_ci_config", lambda: {
+        "provider": "none",
+        "python_version": "3.12",
+        "installer": "uv",
+    })
+
+    result = step_ci({})
+    assert result["ci"]["provider"] == "none"
+
+
+def test_step_ci_pip_installer(monkeypatch):
+    """step_ci must accept installer=pip."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_ci_config", lambda: {
+        "provider": "github",
+        "python_version": "3.11",
+        "installer": "pip",
+    })
+
+    result = step_ci({})
+    assert result["ci"]["installer"] == "pip"
+
+
+def test_step_ci_poetry_installer(monkeypatch):
+    """step_ci must accept installer=poetry."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_ci_config", lambda: {
+        "provider": "github",
+        "python_version": "3.13",
+        "installer": "poetry",
+    })
+
+    result = step_ci({})
+    assert result["ci"]["installer"] == "poetry"
+    assert result["ci"]["python_version"] == "3.13"
+
+
 # ── build_config ──────────────────────────────────────────────────────────────
 
 def test_build_config_produces_project_config():
@@ -292,6 +360,62 @@ def test_build_config_produces_project_config():
     assert config.workflow.default_intent == "sql"
 
 
+def test_build_config_with_ci_github():
+    """build_config must produce a valid ProjectConfig with ci.provider=github."""
+    partial = {
+        "metadata": {
+            "name": "ci_proj",
+            "description": "desc",
+            "python_version": "3.12",
+            "author": "A",
+            "email": "a@b.com",
+        },
+        "agents": [_make_agent("sql", "SqlAgent")],
+        "database": {
+            "backend": "postgres",
+            "tables": [],
+            "connection_env_var": "DATABASE_URL",
+            "pool_size": 5,
+            "max_overflow": 10,
+        },
+        "workflow": {
+            "enable_feedback_loop": True,
+            "enable_validation_node": True,
+            "default_intent": "sql",
+            "max_feedback_attempts": 3,
+        },
+        "api": {
+            "title": "CI API",
+            "query_max_length": 2000,
+            "cors": {"origins": ["*"], "allow_credentials": False},
+        },
+        "observability": {
+            "enable_tracing": False,
+            "tracing_provider": "langfuse",
+            "context_fields": ["request_id"],
+            "log_rotation_bytes": 10_485_760,
+            "log_backup_count": 5,
+        },
+        "security": {
+            "enable_auth": False,
+            "api_key_env_var": "API_KEY",
+            "enable_ip_pseudonymization": False,
+        },
+        "ci": {
+            "provider": "github",
+            "python_version": "3.12",
+            "installer": "poetry",
+        },
+    }
+
+    config = build_config(partial)
+
+    assert isinstance(config, ProjectConfig)
+    assert config.ci.provider == "github"
+    assert config.ci.installer == "poetry"
+    assert config.ci.python_version == "3.12"
+
+
 # ── Baseline end-to-end: all defaults produce a valid ProjectConfig ────────────
 
 def test_wizard_all_defaults_produces_valid_config(monkeypatch):
@@ -299,6 +423,7 @@ def test_wizard_all_defaults_produces_valid_config(monkeypatch):
     Baseline test: composing all steps with their default responses must produce
     a valid ProjectConfig without raising a Pydantic ValidationError.
     This simulates a user pressing Enter through every prompt.
+    ci defaults to provider=none so the CI file is NOT generated.
     """
     import questionary as q
 
@@ -349,6 +474,12 @@ def test_wizard_all_defaults_produces_valid_config(monkeypatch):
         "enable_ip_pseudonymization": False,
     })
 
+    monkeypatch.setattr(f"{_WIZARD}.ask_ci_config", lambda: {
+        "provider": "none",
+        "python_version": "3.12",
+        "installer": "uv",
+    })
+
     partial: dict = {}
     partial = step_metadata(partial)
     partial = step_agents(partial)
@@ -357,6 +488,7 @@ def test_wizard_all_defaults_produces_valid_config(monkeypatch):
     partial = step_api(partial)
     partial = step_observability(partial)
     partial = step_security(partial)
+    partial = step_ci(partial)
 
     config = build_config(partial)
 
@@ -369,6 +501,8 @@ def test_wizard_all_defaults_produces_valid_config(monkeypatch):
     assert config.api.title == "My Agentic API"
     assert config.observability.enable_tracing is False
     assert config.security.enable_auth is False
+    # CI defaults to none — the opt-in is off
+    assert config.ci.provider == "none"
 
 
 # ── Extended database step (TODO-1): backend + use_alembic ────────────────────

@@ -1,0 +1,71 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["{{ ci_python_version }}"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+{% if ci_installer == "uv" %}
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+
+      - name: Set up Python ${{ "{{" }} matrix.python-version {{ "}}" }}
+        run: uv python install ${{ "{{" }} matrix.python-version {{ "}}" }}
+
+      - name: Install dependencies
+        run: uv sync --extra dev
+
+      - name: Lint with ruff
+        run: uv run ruff check .
+
+      - name: Run tests
+        run: uv run pytest -v
+{% elif ci_installer == "pip" %}
+      - name: Set up Python ${{ "{{" }} matrix.python-version {{ "}}" }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ "{{" }} matrix.python-version {{ "}}" }}
+          cache: "pip"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Lint with ruff
+        run: ruff check .
+
+      - name: Run tests
+        run: pytest -v
+{% elif ci_installer == "poetry" %}
+      - name: Set up Python ${{ "{{" }} matrix.python-version {{ "}}" }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ "{{" }} matrix.python-version {{ "}}" }}
+
+      - name: Install Poetry
+        uses: snok/install-poetry@v1
+        with:
+          virtualenvs-create: true
+          virtualenvs-in-project: true
+
+      - name: Install dependencies
+        run: poetry install --with dev
+
+      - name: Lint with ruff
+        run: poetry run ruff check .
+
+      - name: Run tests
+        run: poetry run pytest -v
+{% endif %}

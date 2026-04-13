@@ -16,6 +16,7 @@ The schema is organized hierarchically:
     - CORSConfig (CORS settings)
   - ObservabilityConfig (logging and tracing)
   - SecurityConfig (auth and sanitization)
+  - CiConfig (CI provider settings)
 
 Each model includes field-level validation and documentation.
 """
@@ -237,6 +238,13 @@ class SecurityConfig(BaseModel):
     )
 
 
+class CiConfig(BaseModel):
+    """GitHub Actions CI scaffold options."""
+    provider: Literal["github", "none"] = "none"
+    python_version: str = "3.12"
+    installer: Literal["uv", "pip", "poetry"] = "uv"
+
+
 class ProjectMetadata(BaseModel):
     """Top-level project identity."""
     name: SlugStr = Field(..., description="Python package / GitHub repo name")
@@ -291,6 +299,11 @@ class ProjectConfig(BaseModel):
       enable_auth: true
       api_key_env_var: MY_API_KEY
 
+    ci:
+      provider: github              # default: none (opt-in)
+      python_version: "3.12"
+      installer: uv                 # uv | pip | poetry
+
     enable_provider_registry: false  # default; set true to generate backend/config/provider_registry.py
     """
     metadata: ProjectMetadata
@@ -300,6 +313,7 @@ class ProjectConfig(BaseModel):
     api: APIConfig = Field(default_factory=lambda: APIConfig())  # type: ignore[call-arg]
     observability: ObservabilityConfig = Field(default_factory=lambda: ObservabilityConfig())  # type: ignore[call-arg]
     security: SecurityConfig = Field(default_factory=lambda: SecurityConfig())  # type: ignore[call-arg]
+    ci: CiConfig = Field(default_factory=lambda: CiConfig())  # type: ignore[call-arg]
     enable_provider_registry: bool = Field(
         False,
         description="Generate backend/config/provider_registry.py in the scaffolded project.",
