@@ -21,15 +21,20 @@ from datetime import timedelta
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient, StreamableHttpConnection
 
-from observability.logging import get_logger
+from backend.observability.logging import get_logger
 
 logger = get_logger("mcp_client")
 
-# ---------------------------------------------------------------------------
-# MCP server configuration — read from environment at module load time.
-# Set MCP_SERVERS to a JSON dict of {"server_name": {"url": "...", "timeout": N}}.
-# ---------------------------------------------------------------------------
-_DEFAULT_TIMEOUT = int(os.environ.get("MCP_TIMEOUT", "30"))
+
+def _default_timeout() -> int:
+    """Parse MCP_TIMEOUT env var; log a warning and default to 30 on invalid values."""
+    raw = os.environ.get("MCP_TIMEOUT", "30")
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("MCP_TIMEOUT is not an integer (got %r); defaulting to 30", raw)
+        return 30
+
 
 def _load_mcp_servers() -> dict:
     raw = os.environ.get("MCP_SERVERS", "")
@@ -62,7 +67,7 @@ async def get_mcp_tools(auth_token: str | None = None) -> list[BaseTool]:
 
         for server_name, server_config in mcp_servers.items():
             url = server_config.get("url")
-            timeout_seconds = server_config.get("timeout", _DEFAULT_TIMEOUT)
+            timeout_seconds = server_config.get("timeout", _default_timeout())
 
             if not url:
                 logger.warning("No URL configured for MCP server '%s' — skipping", server_name)

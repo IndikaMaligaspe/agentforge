@@ -26,6 +26,7 @@ from agentforge.schema.loader import load
 from agentforge.writer.scaffold import ScaffoldWriter
 
 FULL_YAML = Path(__file__).parent.parent.parent / "examples" / "project.full.yaml"
+MINIMAL_YAML = Path(__file__).parent.parent / "fixtures" / "minimal.yaml"
 
 # Files expected in the rendered output for the maximalist config.
 EXPECTED_FILES = [
@@ -118,10 +119,30 @@ def _render_full(tmpdir: Path) -> dict[str, str]:
     return rendered
 
 
+def _render_yaml(yaml_path: Path, tmpdir: Path) -> dict[str, str]:
+    """Render an arbitrary yaml config into tmpdir, return {rel_path: content}."""
+    with warnings.catch_warnings():
+        warnings.simplefilter("ignore", UserWarning)
+        cfg = load(yaml_path)
+    renderer = TemplateRenderer()
+    writer = ScaffoldWriter(root=tmpdir, overwrite=True)
+    rendered: dict[str, str] = {}
+    for rel_path, content in renderer.render_all(cfg):
+        writer.write(rel_path, content)
+        rendered[str(rel_path)] = content
+    return rendered
+
+
 @pytest.fixture(scope="module")
 def scaffold() -> Iterator[dict[str, str]]:
     with tempfile.TemporaryDirectory(prefix="agentforge_e2e_") as tmpdir_str:
         yield _render_full(Path(tmpdir_str))
+
+
+@pytest.fixture(scope="module")
+def scaffold_no_mcp() -> Iterator[dict[str, str]]:
+    with tempfile.TemporaryDirectory(prefix="agentforge_e2e_no_mcp_") as tmpdir_str:
+        yield _render_yaml(MINIMAL_YAML, Path(tmpdir_str))
 
 
 def test_expected_files_present(scaffold: dict[str, str]) -> None:
@@ -184,4 +205,36 @@ def test_env_example_no_jwt_secret_for_rs256(scaffold: dict[str, str]) -> None:
     assert "JWT_SECRET=" not in env_example, (
         ".env.example contains JWT_SECRET= but the config uses RS256 (JWKS). "
         "JWT_SECRET is only required for HS256."
+    )
+
+
+def test_mcp_client_uses_env_var_not_dead_settings_import(scaffold: dict[str, str]) -> None:
+    """mcp_client.py must read from MCP_SERVERS env var, not a dead settings import."""
+    mcp = scaffold.get("backend/services/mcp_client.py", "")
+    assert "MCP_SERVERS" in mcp
+    assert "backend.config.settings" not in mcp  # regression guard
+
+
+def test_mcp_client_imports_use_backend_prefix(scaffold: dict[str, str]) -> None:
+    """mcp_client.py must use fully-qualified backend.* imports, not bare top-level ones."""
+    mcp = scaffold.get("backend/services/mcp_client.py", "")
+    assert "\nfrom observability." not in mcp
+    assert "\nfrom services." not in mcp
+    assert "from backend.observability" in mcp
+
+
+def test_env_example_documents_mcp_vars_when_mcp_enabled(scaffold: dict[str, str]) -> None:
+    """When MCP is enabled, .env.example must document MCP_SERVERS and MCP_TIMEOUT."""
+    env = scaffold.get(".env.example", "")
+    assert "MCP_SERVERS" in env
+    assert "MCP_TIMEOUT" in env
+
+
+def test_env_example_omits_mcp_vars_when_mcp_disabled(
+    scaffold_no_mcp: dict[str, str],
+) -> None:
+    """When no agent tool uses mcp_resource, .env.example must NOT contain MCP_SERVERS."""
+    env = scaffold_no_mcp.get(".env.example", "")
+    assert "MCP_SERVERS" not in env, (
+        ".env.example documents MCP_SERVERS even though no MCP tools are configured"
     )
