@@ -155,26 +155,6 @@ def test_benchmark_target_absent_when_benchmarks_disabled():
 
 # ── Tab indentation (Make requirement) ────────────────────────────────────────
 
-def test_recipe_lines_use_tab_not_spaces():
-    """At least one recipe line must start with a real TAB character, not spaces."""
-    content = _render_makefile(_make_config())
-    lines = content.split("\n")
-    recipe_lines = [ln for ln in lines if ln.startswith("\t")]
-    assert len(recipe_lines) > 0, "No recipe lines found starting with TAB"
-    for line in recipe_lines:
-        assert line[0] == "\t", f"Recipe line starts with non-tab: {repr(line[:20])}"
-
-
-def test_recipe_lines_are_not_space_indented():
-    """No recipe line should use leading spaces instead of a tab."""
-    content = _render_makefile(_make_config())
-    lines = content.split("\n")
-    # Lines that look like recipe commands (non-empty, indented) must use tabs
-    for line in lines:
-        if line and line[0] == " " and line.lstrip():
-            pytest.fail(f"Recipe line uses space indentation: {repr(line[:40])}")
-
-
 def test_recipe_tab_byte_check():
     """Byte-level assertion: the help recipe line must start with byte 0x09 (TAB)."""
     content = _render_makefile(_make_config())

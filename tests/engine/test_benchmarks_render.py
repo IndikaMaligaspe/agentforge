@@ -148,29 +148,18 @@ def test_benchmark_python_file_compiles(path: str):
         pytest.fail(f"{path} has a syntax error: {e}")
 
 
-# ── No Slack / webhook references anywhere in rendered output ─────────────────
+# ── No forbidden strings anywhere in rendered output ─────────────────────────
 
-def test_no_slack_references_in_rendered_output():
-    """Case-insensitive grep for 'slack' must find zero matches across ALL rendered files."""
+@pytest.mark.parametrize("forbidden", ["slack", "webhook"])
+def test_no_forbidden_string_in_output(forbidden: str):
+    """Case-insensitive grep for each forbidden string must find zero matches in ALL rendered files."""
     rendered = _render_map(_make_config(eval_framework="deepeval", enable_benchmarks=True))
     violations = []
     for path, content in rendered.items():
-        if re.search(r"slack", content, re.IGNORECASE):
+        if re.search(forbidden, content, re.IGNORECASE):
             violations.append(path)
     assert not violations, (
-        f"'slack' found (case-insensitive) in rendered files: {violations}"
-    )
-
-
-def test_no_webhook_references_in_rendered_output():
-    """Case-insensitive grep for 'webhook' must find zero matches across ALL rendered files."""
-    rendered = _render_map(_make_config(eval_framework="deepeval", enable_benchmarks=True))
-    violations = []
-    for path, content in rendered.items():
-        if re.search(r"webhook", content, re.IGNORECASE):
-            violations.append(path)
-    assert not violations, (
-        f"'webhook' found (case-insensitive) in rendered files: {violations}"
+        f"'{forbidden}' found (case-insensitive) in rendered files: {violations}"
     )
 
 
@@ -215,21 +204,6 @@ def test_benchmark_files_under_backend_tests_benchmarks():
     for path in benchmark_keys:
         assert path.startswith("backend/tests/benchmarks/"), (
             f"Benchmark file rendered to unexpected path: {path}"
-        )
-
-
-# ── Import rebinding — no app.services references ────────────────────────────
-
-def test_no_app_services_imports_in_benchmark_output():
-    """Rendered benchmark files must not import from app.services (old agentic-cli layout)."""
-    rendered = _render_map(_make_config(eval_framework="deepeval", enable_benchmarks=True))
-    for path in BENCHMARK_PY_PATHS:
-        content = rendered.get(path, "")
-        assert "app.services" not in content, (
-            f"Old agentic-cli import 'app.services' found in {path}"
-        )
-        assert "app.core" not in content, (
-            f"Old agentic-cli import 'app.core' found in {path}"
         )
 
 

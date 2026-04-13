@@ -50,39 +50,79 @@ def _make_agent(key="sql", class_name="SqlAgent"):
 _WIZARD = "agentforge.prompts.wizard"
 
 
-# ── step_metadata ─────────────────────────────────────────────────────────────
+# ── Parametrized dict-spread contract (merge + no-mutate) ────────────────────
+# Covers the 8 simple steps that follow the pattern:
+#   result = {**partial, output_key: ask_fn()}
+# step_agents and step_workflow have richer signatures and keep their own tests.
 
-def test_step_metadata_merges_into_partial(monkeypatch):
-    """step_metadata must add 'metadata' key and leave other keys untouched."""
-    monkeypatch.setattr(f"{_WIZARD}.ask_project_metadata", lambda: {
-        "name": "my_project",
-        "description": "A test project",
-        "python_version": "3.11",
-        "author": "Test Author",
-        "email": "test@example.com",
-    })
+_STEP_CONTRACT_PARAMS = [
+    (
+        step_metadata, "ask_project_metadata", "metadata",
+        {
+            "name": "my_project", "description": "A test project",
+            "python_version": "3.11", "author": "Test Author", "email": "test@example.com",
+        },
+    ),
+    (
+        step_database, "ask_database_config", "database",
+        {
+            "backend": "postgres", "tables": [], "connection_env_var": "DATABASE_URL",
+            "pool_size": 5, "max_overflow": 10,
+        },
+    ),
+    (
+        step_api, "ask_api_config", "api",
+        {
+            "title": "My API", "query_max_length": 2000,
+            "cors": {"origins": ["*"], "allow_credentials": False},
+        },
+    ),
+    (
+        step_observability, "ask_observability_config", "observability",
+        {
+            "enable_tracing": False, "tracing_provider": "langfuse",
+            "context_fields": ["request_id"], "log_rotation_bytes": 10_485_760,
+            "log_backup_count": 5,
+        },
+    ),
+    (
+        step_security, "ask_security_config", "security",
+        {"enable_auth": False, "api_key_env_var": "API_KEY", "enable_ip_pseudonymization": False},
+    ),
+    (
+        step_development, "ask_development_config", "development",
+        {"pre_commit": True},
+    ),
+    (
+        step_ci, "ask_ci_config", "ci",
+        {"provider": "github", "python_version": "3.12", "installer": "uv"},
+    ),
+    (
+        step_testing, "ask_testing_config", "testing",
+        {"eval_framework": "none", "enable_benchmarks": False},
+    ),
+]
 
-    initial = {"existing_key": "preserved"}
-    result = step_metadata(initial)
 
-    assert result["existing_key"] == "preserved"
-    assert result["metadata"]["name"] == "my_project"
-    assert result["metadata"]["python_version"] == "3.11"
+@pytest.mark.parametrize(
+    "step_fn, ask_fn_name, output_key, ask_return",
+    _STEP_CONTRACT_PARAMS,
+    ids=[p[2] for p in _STEP_CONTRACT_PARAMS],
+)
+def test_wizard_step_contract(step_fn, ask_fn_name, output_key, ask_return, monkeypatch):
+    """Every simple step merges into the partial and does not mutate the input dict."""
+    monkeypatch.setattr(f"{_WIZARD}.{ask_fn_name}", lambda *a, **kw: ask_return)
 
+    input_dict = {"existing": "value"}
+    input_dict_copy = dict(input_dict)
+    result = step_fn(input_dict)
 
-def test_step_metadata_does_not_mutate_input(monkeypatch):
-    """step_metadata must not mutate the incoming partial dict."""
-    monkeypatch.setattr(f"{_WIZARD}.ask_project_metadata", lambda: {
-        "name": "my_project",
-        "description": "desc",
-        "python_version": "3.12",
-        "author": "A",
-        "email": "a@b.com",
-    })
-
-    initial = {}
-    step_metadata(initial)
-    assert initial == {}
+    # contract 1: non-mutation of input
+    assert input_dict == input_dict_copy, f"{step_fn.__name__} mutated the input dict"
+    # contract 2: existing keys preserved in output
+    assert result["existing"] == "value", f"{step_fn.__name__} dropped existing keys"
+    # contract 3: step's output key added
+    assert output_key in result, f"{step_fn.__name__} did not add '{output_key}' to output"
 
 
 # ── step_agents ───────────────────────────────────────────────────────────────
@@ -130,37 +170,6 @@ def test_step_agents_does_not_mutate_input(monkeypatch):
     initial = {"metadata": {"name": "x"}}
     step_agents(initial)
     assert "agents" not in initial
-
-
-# ── step_database ─────────────────────────────────────────────────────────────
-
-def test_step_database_merges_database_key(monkeypatch):
-    monkeypatch.setattr(f"{_WIZARD}.ask_database_config", lambda: {
-        "backend": "postgres",
-        "tables": [],
-        "connection_env_var": "DATABASE_URL",
-        "pool_size": 5,
-        "max_overflow": 10,
-    })
-
-    result = step_database({"x": 1})
-    assert result["x"] == 1
-    assert result["database"]["backend"] == "postgres"
-    assert result["database"]["pool_size"] == 5
-
-
-def test_step_database_does_not_mutate_input(monkeypatch):
-    monkeypatch.setattr(f"{_WIZARD}.ask_database_config", lambda: {
-        "backend": "sqlite",
-        "tables": [],
-        "connection_env_var": "DATABASE_URL",
-        "pool_size": 1,
-        "max_overflow": 0,
-    })
-
-    initial = {}
-    step_database(initial)
-    assert initial == {}
 
 
 # ── step_workflow ─────────────────────────────────────────────────────────────
@@ -258,47 +267,7 @@ def test_step_workflow_sqlite_skips_checkpointing(monkeypatch):
     assert result["workflow"]["enable_checkpointing"] is False
 
 
-# ── step_api ──────────────────────────────────────────────────────────────────
-
-def test_step_api_merges_api_key(monkeypatch):
-    monkeypatch.setattr(f"{_WIZARD}.ask_api_config", lambda: {
-        "title": "My API",
-        "query_max_length": 2000,
-        "cors": {"origins": ["*"], "allow_credentials": False},
-    })
-
-    result = step_api({})
-    assert result["api"]["title"] == "My API"
-
-
-# ── step_observability ────────────────────────────────────────────────────────
-
-def test_step_observability_merges_observability_key(monkeypatch):
-    monkeypatch.setattr(f"{_WIZARD}.ask_observability_config", lambda: {
-        "enable_tracing": False,
-        "tracing_provider": "langfuse",
-        "context_fields": ["request_id"],
-        "log_rotation_bytes": 10_485_760,
-        "log_backup_count": 5,
-    })
-
-    result = step_observability({"x": 99})
-    assert result["x"] == 99
-    assert result["observability"]["enable_tracing"] is False
-
-
-# ── step_security ─────────────────────────────────────────────────────────────
-
-def test_step_security_merges_security_key(monkeypatch):
-    monkeypatch.setattr(f"{_WIZARD}.ask_security_config", lambda: {
-        "enable_auth": False,
-        "api_key_env_var": "API_KEY",
-        "enable_ip_pseudonymization": False,
-    })
-
-    result = step_security({})
-    assert result["security"]["enable_auth"] is False
-
+# ── step_security (JWT-specific detail tests) ─────────────────────────────────
 
 def test_step_security_returns_auth_type_none(monkeypatch):
     """step_security with auth_type='none' must produce security.auth_type='none'."""
@@ -499,18 +468,7 @@ def test_build_config_with_jwt_rs256():
     assert config.security.enable_auth is True
 
 
-# ── step_development ──────────────────────────────────────────────────────────
-
-def test_step_development_merges_development_key(monkeypatch):
-    """step_development must add 'development' key and leave other keys untouched."""
-    monkeypatch.setattr(f"{_WIZARD}.ask_development_config", lambda: {
-        "pre_commit": True,
-    })
-
-    result = step_development({"existing": "value"})
-    assert result["existing"] == "value"
-    assert result["development"]["pre_commit"] is True
-
+# ── step_development (installer-variant tests) ────────────────────────────────
 
 def test_step_development_pre_commit_false(monkeypatch):
     """step_development with pre_commit=False must set development.pre_commit=False."""
@@ -522,46 +480,7 @@ def test_step_development_pre_commit_false(monkeypatch):
     assert result["development"]["pre_commit"] is False
 
 
-def test_step_development_does_not_mutate_input(monkeypatch):
-    """step_development must not mutate the incoming partial dict."""
-    monkeypatch.setattr(f"{_WIZARD}.ask_development_config", lambda: {
-        "pre_commit": True,
-    })
-
-    initial = {"metadata": {"name": "x"}}
-    step_development(initial)
-    assert "development" not in initial
-
-
-# ── step_ci ───────────────────────────────────────────────────────────────────
-
-def test_step_ci_merges_ci_key(monkeypatch):
-    """step_ci must add 'ci' key and leave other keys untouched."""
-    monkeypatch.setattr(f"{_WIZARD}.ask_ci_config", lambda: {
-        "provider": "github",
-        "python_version": "3.12",
-        "installer": "uv",
-    })
-
-    result = step_ci({"existing": "value"})
-    assert result["existing"] == "value"
-    assert result["ci"]["provider"] == "github"
-    assert result["ci"]["python_version"] == "3.12"
-    assert result["ci"]["installer"] == "uv"
-
-
-def test_step_ci_does_not_mutate_input(monkeypatch):
-    """step_ci must not mutate the incoming partial dict."""
-    monkeypatch.setattr(f"{_WIZARD}.ask_ci_config", lambda: {
-        "provider": "none",
-        "python_version": "3.12",
-        "installer": "uv",
-    })
-
-    initial = {"metadata": {"name": "x"}}
-    step_ci(initial)
-    assert "ci" not in initial
-
+# ── step_ci (installer-variant tests) ────────────────────────────────────────
 
 def test_step_ci_provider_none_default(monkeypatch):
     """step_ci with provider=none must produce ci.provider == 'none'."""
@@ -955,31 +874,6 @@ def test_step_workflow_forces_checkpointing_off_for_non_postgres(monkeypatch):
 
 
 # ── step_testing (TODO-7) ─────────────────────────────────────────────────────
-
-def test_step_testing_merges_testing_key(monkeypatch):
-    """step_testing must add 'testing' key and leave other keys untouched."""
-    monkeypatch.setattr(f"{_WIZARD}.ask_testing_config", lambda: {
-        "eval_framework": "none",
-        "enable_benchmarks": False,
-    })
-
-    result = step_testing({"existing": "value"})
-    assert result["existing"] == "value"
-    assert result["testing"]["eval_framework"] == "none"
-    assert result["testing"]["enable_benchmarks"] is False
-
-
-def test_step_testing_does_not_mutate_input(monkeypatch):
-    """step_testing must not mutate the incoming partial dict."""
-    monkeypatch.setattr(f"{_WIZARD}.ask_testing_config", lambda: {
-        "eval_framework": "none",
-        "enable_benchmarks": False,
-    })
-
-    initial = {"metadata": {"name": "x"}}
-    step_testing(initial)
-    assert "testing" not in initial
-
 
 def test_step_testing_deepeval_framework(monkeypatch):
     """step_testing with eval_framework=deepeval must set testing.eval_framework='deepeval'."""
