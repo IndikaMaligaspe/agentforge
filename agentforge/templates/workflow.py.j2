@@ -24,7 +24,9 @@ from .nodes.feedback_node import (
 )
 {% endif %}
 {% if workflow_enable_checkpointing %}
-from .checkpointer import get_postgres_saver
+# When checkpointing is enabled, your ASGI lifespan MUST await init_checkpointer()
+# before any request invokes the graph.
+from .checkpointer import init_checkpointer, aclose_checkpointer, get_checkpointer
 {% endif %}
 from observability.logging import get_logger
 import agents  # ensure all @AgentRegistry.register decorators execute
@@ -107,12 +109,27 @@ def _build_graph() -> StateGraph:
 # ── Compile once at module load ──────────────────────────────────────────────
 # Risk 2 Mitigation: do NOT attach CallbackHandler() here.
 # Pass it at invoke time via config={"callbacks": [CallbackHandler()]}.
-{% if workflow_enable_checkpointing %}
-_COMPILED_GRAPH = _build_graph().compile(checkpointer=get_postgres_saver())
-{% else %}
 _COMPILED_GRAPH = _build_graph().compile()
-{% endif %}
 logger.info("workflow: graph compiled and cached at startup")
+{% if workflow_enable_checkpointing %}
+
+# The base graph above is compiled without persistence. get_compiled_graph()
+# attaches the saver after init_checkpointer() has run in the ASGI lifespan.
+_CHECKPOINTED_GRAPH = None
+
+
+def get_compiled_graph():
+    """Return the compiled graph with the async saver attached.
+
+    On first call, compiles the graph with the already-initialized
+    AsyncPostgresSaver. Subsequent calls return the cached instance.
+    Raises RuntimeError if init_checkpointer() has not been awaited first.
+    """
+    global _CHECKPOINTED_GRAPH
+    if _CHECKPOINTED_GRAPH is None:
+        _CHECKPOINTED_GRAPH = _build_graph().compile(checkpointer=get_checkpointer())
+    return _CHECKPOINTED_GRAPH
+{% endif %}
 
 
 def get_workflow():

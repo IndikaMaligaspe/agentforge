@@ -713,3 +713,33 @@ def test_step_database_sqlite_no_use_alembic_does_not_error(monkeypatch):
     assert result["existing"] == "value"
     assert result["database"]["backend"] == "sqlite"
     assert result["database"]["use_alembic"] is False
+
+
+# ── Fix 4: wizard defensive reset ────────────────────────────────────────────
+
+def test_step_workflow_forces_checkpointing_off_for_non_postgres(monkeypatch):
+    """step_workflow must set enable_checkpointing=False when backend is not postgres.
+
+    Even if ask_workflow_config returns enable_checkpointing=True (a stale value
+    from a previous postgres run), step_workflow must override it to False for
+    sqlite and any other non-postgres backend.
+    """
+    monkeypatch.setattr(
+        f"{_WIZARD}.ask_workflow_config",
+        lambda agent_keys, db_backend="postgres": {
+            "enable_feedback_loop": False,
+            "enable_validation_node": False,
+            "default_intent": "sql",
+            "max_feedback_attempts": 1,
+            # Simulate stale True from a prior postgres run
+            "enable_checkpointing": True,
+        },
+    )
+
+    partial = {
+        "agents": [_make_agent("sql")],
+        "database": {"backend": "sqlite"},
+    }
+    result = step_workflow(partial)
+
+    assert result["workflow"]["enable_checkpointing"] is False

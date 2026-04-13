@@ -1,57 +1,53 @@
 {# graph/postgres_with_saver.py.j2 - PostgreSQL-backed LangGraph checkpointer #}
-"""
-checkpointer.py — Async PostgreSQL saver for LangGraph checkpoint persistence.
+"""PostgreSQL-backed LangGraph checkpointer.
 
-This module owns the lifecycle of the AsyncPostgresSaver used to persist
-graph state across invocations.  Import :func:`get_postgres_saver` wherever
-a compiled graph needs ``checkpointer=``.
-
-Call :func:`setup_checkpoint_tables` once during application startup (e.g.
-from the FastAPI lifespan handler) to ensure the required checkpoint schema
-exists in the database.
+Uses a shared AsyncConnectionPool + AsyncPostgresSaver owned by this module.
+Initialize from your ASGI framework's lifespan handler (FastAPI, Starlette)
+BEFORE the graph is first invoked. Module-level graph compile MUST NOT call
+`get_checkpointer()` directly — the saver is async-initialized.
 """
 from __future__ import annotations
 
-import logging
-
+from psycopg.rows import dict_row
+from psycopg_pool import AsyncConnectionPool
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 
 from backend.config.memory_settings import DATABASE_URL
 
-logger = logging.getLogger(__name__)
-
-# Module-level singletons — initialised lazily on first call to
-# get_postgres_saver().  Using module globals avoids repeated connection
-# setup across calls without introducing a class.
-_postgres_saver: AsyncPostgresSaver | None = None
+_pool: AsyncConnectionPool | None = None
+_saver: AsyncPostgresSaver | None = None
 
 
-def _create_saver() -> AsyncPostgresSaver:
-    """Construct the AsyncPostgresSaver from the project connection string."""
-    logger.info("Initialising AsyncPostgresSaver for LangGraph checkpointing")
-    return AsyncPostgresSaver.from_conn_string(DATABASE_URL)
+async def init_checkpointer() -> AsyncPostgresSaver:
+    """Open the pool, set up tables, and return the shared saver. Idempotent."""
+    global _pool, _saver
+    if _saver is not None:
+        return _saver
+    _pool = AsyncConnectionPool(
+        DATABASE_URL,
+        open=False,
+        kwargs={"autocommit": True, "row_factory": dict_row, "prepare_threshold": 0},
+    )
+    await _pool.open()
+    _saver = AsyncPostgresSaver(_pool)
+    await _saver.setup()
+    return _saver
 
 
-def get_postgres_saver() -> AsyncPostgresSaver:
-    """Return the module-level AsyncPostgresSaver singleton.
-
-    Creates the saver on first call; subsequent calls return the cached
-    instance.
-    """
-    global _postgres_saver
-    if _postgres_saver is None:
-        _postgres_saver = _create_saver()
-    return _postgres_saver
+async def aclose_checkpointer() -> None:
+    """Close the pool. Call from lifespan shutdown."""
+    global _pool, _saver
+    if _pool is not None:
+        await _pool.close()
+    _pool = None
+    _saver = None
 
 
-async def setup_checkpoint_tables() -> None:
-    """Create the LangGraph checkpoint tables if they do not already exist.
-
-    This is idempotent — safe to call on every application startup.
-    Call this from your FastAPI ``lifespan`` handler **before** the first
-    graph invocation.
-    """
-    logger.info("Setting up LangGraph checkpoint tables")
-    saver = get_postgres_saver()
-    await saver.setup()
-    logger.info("Checkpoint tables ready")
+def get_checkpointer() -> AsyncPostgresSaver:
+    """Return the already-initialized saver. Raises if init_checkpointer was not awaited."""
+    if _saver is None:
+        raise RuntimeError(
+            "PostgresSaver not initialized. Await init_checkpointer() from your "
+            "ASGI lifespan before invoking the graph."
+        )
+    return _saver

@@ -10,6 +10,7 @@ Covers:
   only when checkpointing is enabled.
 """
 import ast
+import re
 
 import pytest
 
@@ -160,18 +161,25 @@ def test_checkpointer_uses_async_postgres_saver():
     assert "AsyncPostgresSaver" in content
 
 
-def test_checkpointer_exposes_get_postgres_saver():
-    """checkpointer.py must expose get_postgres_saver()."""
+def test_checkpointer_exposes_get_checkpointer():
+    """checkpointer.py must expose get_checkpointer()."""
     rendered = _render_map(_make_config(enable_checkpointing=True))
     content = rendered["backend/graph/checkpointer.py"]
-    assert "def get_postgres_saver" in content
+    assert "def get_checkpointer" in content
 
 
-def test_checkpointer_exposes_setup_checkpoint_tables():
-    """checkpointer.py must expose setup_checkpoint_tables()."""
+def test_checkpointer_exposes_init_checkpointer():
+    """checkpointer.py must expose async init_checkpointer()."""
     rendered = _render_map(_make_config(enable_checkpointing=True))
     content = rendered["backend/graph/checkpointer.py"]
-    assert "async def setup_checkpoint_tables" in content
+    assert "async def init_checkpointer" in content
+
+
+def test_checkpointer_exposes_aclose_checkpointer():
+    """checkpointer.py must expose async aclose_checkpointer()."""
+    rendered = _render_map(_make_config(enable_checkpointing=True))
+    content = rendered["backend/graph/checkpointer.py"]
+    assert "async def aclose_checkpointer" in content
 
 
 # ── memory_settings.py content ────────────────────────────────────────────────
@@ -194,18 +202,22 @@ def test_memory_settings_no_madgicx_references():
 
 # ── workflow.py with checkpointing enabled ────────────────────────────────────
 
-def test_workflow_imports_get_postgres_saver_when_enabled():
-    """workflow.py must import get_postgres_saver when checkpointing is enabled."""
+def test_workflow_imports_checkpointer_symbols_when_enabled():
+    """workflow.py must import init_checkpointer, aclose_checkpointer, get_checkpointer when enabled."""
     rendered = _render_map(_make_config(enable_checkpointing=True))
     workflow_content = rendered["backend/graph/workflow.py"]
-    assert "from .checkpointer import get_postgres_saver" in workflow_content
+    assert "from .checkpointer import" in workflow_content
+    assert "init_checkpointer" in workflow_content
+    assert "aclose_checkpointer" in workflow_content
+    assert "get_checkpointer" in workflow_content
 
 
-def test_workflow_compile_includes_checkpointer_when_enabled():
-    """workflow.py must pass checkpointer= to .compile() when enabled."""
+def test_workflow_get_compiled_graph_uses_checkpointer_when_enabled():
+    """workflow.py must call get_checkpointer() inside get_compiled_graph() when enabled."""
     rendered = _render_map(_make_config(enable_checkpointing=True))
     workflow_content = rendered["backend/graph/workflow.py"]
-    assert "checkpointer=get_postgres_saver()" in workflow_content
+    assert "get_compiled_graph" in workflow_content
+    assert "get_checkpointer()" in workflow_content
 
 
 def test_workflow_compile_no_checkpointer_when_disabled():
@@ -247,3 +259,53 @@ def test_pyproject_psycopg_pool_pin():
     tmpl = renderer._env.get_template("pyproject.toml.j2")
     content = tmpl.render(**ctx)
     assert ">=3.2.0,<4.0.0" in content
+
+
+# ── Fix 1: pool-based async pattern (no from_conn_string) ────────────────────
+
+def test_checkpointer_uses_async_pool_pattern():
+    """checkpointer.py must use AsyncConnectionPool + async init, not from_conn_string."""
+    rendered = _render_map(_make_config(enable_checkpointing=True))
+    content = rendered["backend/graph/checkpointer.py"]
+    assert "AsyncConnectionPool" in content
+    assert "init_checkpointer" in content
+    assert "aclose_checkpointer" in content
+    assert "from_conn_string" not in content
+
+
+# ── Fix 3: DSN scheme ─────────────────────────────────────────────────────────
+
+def test_dsn_uses_plain_postgresql_scheme():
+    """memory_settings.py default DSN must use postgresql:// not postgresql+psycopg://."""
+    rendered = _render_map(_make_config(enable_checkpointing=True))
+    content = rendered["backend/config/memory_settings.py"]
+    assert "postgresql://" in content
+    assert "postgresql+psycopg://" not in content
+
+
+# ── Fix 2: no top-level get_checkpointer() call at import time ───────────────
+
+def test_workflow_template_does_not_call_saver_at_import():
+    """workflow.py with checkpointing enabled must not call get_checkpointer() at module top level."""
+    rendered = _render_map(_make_config(enable_checkpointing=True))
+    content = rendered["backend/graph/workflow.py"]
+
+    # Parse the module; find all calls to get_checkpointer at module scope
+    # (i.e., not inside a function or class body).
+    tree = ast.parse(content)
+    top_level_calls = []
+    for node in ast.iter_child_nodes(tree):
+        # Only look at top-level expressions and assignments outside functions
+        if isinstance(node, (ast.Expr, ast.Assign, ast.AugAssign, ast.AnnAssign)):
+            for child in ast.walk(node):
+                if (
+                    isinstance(child, ast.Call)
+                    and isinstance(child.func, ast.Name)
+                    and child.func.id == "get_checkpointer"
+                ):
+                    top_level_calls.append(child)
+
+    assert not top_level_calls, (
+        "get_checkpointer() must not be called at module top level in workflow.py; "
+        f"found {len(top_level_calls)} top-level call(s)"
+    )

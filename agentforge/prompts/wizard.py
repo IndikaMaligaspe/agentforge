@@ -76,6 +76,12 @@ def step_workflow(partial: dict) -> dict:
         db_backend = getattr(database_raw, "backend", DBBackend.POSTGRES).value
 
     workflow_dict = ask_workflow_config(agent_keys, db_backend=db_backend)
+
+    # Defensive reset: stale enable_checkpointing=True from a previous postgres
+    # run must not survive a backend downgrade to sqlite/mysql.
+    if db_backend != DBBackend.POSTGRES.value:
+        workflow_dict["enable_checkpointing"] = False
+
     return {**partial, "workflow": workflow_dict}
 
 
