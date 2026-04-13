@@ -1,0 +1,565 @@
+{
+  "$defs": {
+    "APIConfig": {
+      "description": "FastAPI application options \u2192 main.py",
+      "properties": {
+        "title": {
+          "default": "My Agentic API",
+          "title": "Title",
+          "type": "string"
+        },
+        "query_max_length": {
+          "default": 2000,
+          "maximum": 10000,
+          "minimum": 50,
+          "title": "Query Max Length",
+          "type": "integer"
+        },
+        "endpoints": {
+          "description": "Endpoint paths to scaffold",
+          "items": {
+            "type": "string"
+          },
+          "title": "Endpoints",
+          "type": "array"
+        },
+        "cors": {
+          "$ref": "#/$defs/CORSConfig"
+        }
+      },
+      "title": "APIConfig",
+      "type": "object"
+    },
+    "AgentConfig": {
+      "description": "One concrete agent scaffolded under agents/<key>_agent.py",
+      "properties": {
+        "key": {
+          "description": "Intent routing key, e.g. 'sql'",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Key",
+          "type": "string"
+        },
+        "class_name": {
+          "description": "Python class name, e.g. 'SQLAgent'",
+          "maxLength": 128,
+          "minLength": 1,
+          "pattern": "^[A-Z][A-Za-z0-9]*$",
+          "title": "Class Name",
+          "type": "string"
+        },
+        "llm_model": {
+          "$ref": "#/$defs/LLMModel",
+          "default": "gpt-4o-mini",
+          "description": "LLM model identifier"
+        },
+        "system_prompt": {
+          "default": "You are a helpful assistant.",
+          "description": "System prompt injected into the ReAct agent",
+          "title": "System Prompt",
+          "type": "string"
+        },
+        "tools": {
+          "items": {
+            "$ref": "#/$defs/ToolConfig"
+          },
+          "title": "Tools",
+          "type": "array"
+        },
+        "needs_validation": {
+          "default": false,
+          "description": "If True, supervisor routes this agent's output through validation_node",
+          "title": "Needs Validation",
+          "type": "boolean"
+        },
+        "extra_return_keys": {
+          "description": "Additional keys beyond success/output/error in run() return dict",
+          "items": {
+            "type": "string"
+          },
+          "title": "Extra Return Keys",
+          "type": "array"
+        }
+      },
+      "required": [
+        "key",
+        "class_name"
+      ],
+      "title": "AgentConfig",
+      "type": "object"
+    },
+    "CORSConfig": {
+      "properties": {
+        "origins": {
+          "items": {
+            "anyOf": [
+              {
+                "format": "uri",
+                "minLength": 1,
+                "type": "string"
+              },
+              {
+                "const": "*",
+                "type": "string"
+              }
+            ]
+          },
+          "title": "Origins",
+          "type": "array"
+        },
+        "allow_credentials": {
+          "default": false,
+          "title": "Allow Credentials",
+          "type": "boolean"
+        }
+      },
+      "title": "CORSConfig",
+      "type": "object"
+    },
+    "CiConfig": {
+      "description": "GitHub Actions CI scaffold options.",
+      "properties": {
+        "provider": {
+          "default": "none",
+          "enum": [
+            "github",
+            "none"
+          ],
+          "title": "Provider",
+          "type": "string"
+        },
+        "python_version": {
+          "default": "3.12",
+          "title": "Python Version",
+          "type": "string"
+        },
+        "installer": {
+          "default": "uv",
+          "enum": [
+            "uv",
+            "pip",
+            "poetry"
+          ],
+          "title": "Installer",
+          "type": "string"
+        }
+      },
+      "title": "CiConfig",
+      "type": "object"
+    },
+    "DBBackend": {
+      "description": "Supported database backends for the scaffolded project.\n\nThese values determine which database-specific code is generated\nin the mcp_server.py template and which dependencies are added\nto requirements.txt.",
+      "enum": [
+        "postgres",
+        "sqlite",
+        "mysql",
+        "mssql",
+        "bigquery"
+      ],
+      "title": "DBBackend",
+      "type": "string"
+    },
+    "DatabaseConfig": {
+      "description": "DB pool configuration \u2192 mcp_server.py",
+      "properties": {
+        "backend": {
+          "$ref": "#/$defs/DBBackend",
+          "default": "postgres"
+        },
+        "tables": {
+          "description": "Table names scaffolded into schema docs",
+          "items": {
+            "type": "string"
+          },
+          "title": "Tables",
+          "type": "array"
+        },
+        "connection_env_var": {
+          "default": "DATABASE_URL",
+          "description": "Environment variable name that holds the connection string",
+          "title": "Connection Env Var",
+          "type": "string"
+        },
+        "pool_size": {
+          "default": 5,
+          "maximum": 100,
+          "minimum": 1,
+          "title": "Pool Size",
+          "type": "integer"
+        },
+        "max_overflow": {
+          "default": 10,
+          "maximum": 200,
+          "minimum": 0,
+          "title": "Max Overflow",
+          "type": "integer"
+        },
+        "use_alembic": {
+          "default": false,
+          "description": "Generate Alembic migration scaffold under backend/migrations/",
+          "title": "Use Alembic",
+          "type": "boolean"
+        }
+      },
+      "title": "DatabaseConfig",
+      "type": "object"
+    },
+    "DevelopmentConfig": {
+      "description": "Local development tooling scaffold options.",
+      "properties": {
+        "pre_commit": {
+          "default": false,
+          "description": "Generate .pre-commit-config.yaml with ruff and common hooks",
+          "title": "Pre Commit",
+          "type": "boolean"
+        }
+      },
+      "title": "DevelopmentConfig",
+      "type": "object"
+    },
+    "LLMModel": {
+      "description": "Supported LLM models for agents and router nodes.\n\nThese model identifiers are used directly in the LangChain\nChatOpenAI constructor and must match the provider's API.",
+      "enum": [
+        "gpt-4o",
+        "gpt-4o-mini",
+        "gpt-4-turbo",
+        "claude-3-5-sonnet-20241022",
+        "claude-3-haiku-20240307",
+        "gemini-pro",
+        "ollama/llama3"
+      ],
+      "title": "LLMModel",
+      "type": "string"
+    },
+    "ObservabilityConfig": {
+      "description": "Logging + tracing \u2192 observability/logging.py + tracing.py",
+      "properties": {
+        "enable_tracing": {
+          "default": false,
+          "description": "Wire Langfuse @observe decorators",
+          "title": "Enable Tracing",
+          "type": "boolean"
+        },
+        "tracing_provider": {
+          "const": "langfuse",
+          "default": "langfuse",
+          "title": "Tracing Provider",
+          "type": "string"
+        },
+        "context_fields": {
+          "description": "ContextVar names injected into every log line",
+          "items": {
+            "type": "string"
+          },
+          "title": "Context Fields",
+          "type": "array"
+        },
+        "log_rotation_bytes": {
+          "default": 10485760,
+          "description": "10 MB default",
+          "title": "Log Rotation Bytes",
+          "type": "integer"
+        },
+        "log_backup_count": {
+          "default": 5,
+          "title": "Log Backup Count",
+          "type": "integer"
+        },
+        "structured_logging": {
+          "default": false,
+          "description": "Use structlog for JSON logging in the scaffolded project.",
+          "title": "Structured Logging",
+          "type": "boolean"
+        }
+      },
+      "title": "ObservabilityConfig",
+      "type": "object"
+    },
+    "ProjectMetadata": {
+      "description": "Top-level project identity.",
+      "properties": {
+        "name": {
+          "description": "Python package / GitHub repo name",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "default": "An agentic project scaffolded by agentforge",
+          "title": "Description",
+          "type": "string"
+        },
+        "python_version": {
+          "default": "3.11",
+          "pattern": "^\\d+\\.\\d+$",
+          "title": "Python Version",
+          "type": "string"
+        },
+        "author": {
+          "default": "Your Name",
+          "title": "Author",
+          "type": "string"
+        },
+        "email": {
+          "default": "you@example.com",
+          "title": "Email",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "ProjectMetadata",
+      "type": "object"
+    },
+    "SecurityConfig": {
+      "description": "Auth + sanitizer \u2192 security/auth.py",
+      "properties": {
+        "auth_type": {
+          "default": "none",
+          "description": "Authentication strategy: none (open), api_key, or jwt",
+          "enum": [
+            "none",
+            "api_key",
+            "jwt"
+          ],
+          "title": "Auth Type",
+          "type": "string"
+        },
+        "api_key_env_var": {
+          "default": "API_KEY",
+          "description": "Env var holding the secret key",
+          "title": "Api Key Env Var",
+          "type": "string"
+        },
+        "enable_ip_pseudonymization": {
+          "default": false,
+          "description": "Hash client IPs before logging in logging_middleware.py",
+          "title": "Enable Ip Pseudonymization",
+          "type": "boolean"
+        },
+        "jwt_algorithm": {
+          "anyOf": [
+            {
+              "enum": [
+                "HS256",
+                "RS256"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "JWT signing algorithm. Required when auth_type='jwt'.",
+          "title": "Jwt Algorithm"
+        },
+        "jwt_issuer": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Expected JWT issuer claim (iss). Used as default in generated settings.",
+          "title": "Jwt Issuer"
+        },
+        "jwt_audience": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Expected JWT audience claim (aud). Used as default in generated settings.",
+          "title": "Jwt Audience"
+        },
+        "jwks_url": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "JWKS endpoint URL. Required when jwt_algorithm='RS256'.",
+          "title": "Jwks Url"
+        }
+      },
+      "title": "SecurityConfig",
+      "type": "object"
+    },
+    "TestingConfig": {
+      "description": "Opt-in evaluation framework and benchmark scaffold options.",
+      "properties": {
+        "eval_framework": {
+          "default": "none",
+          "description": "Evaluation framework to use. 'deepeval' enables the benchmark scaffold.",
+          "enum": [
+            "none",
+            "deepeval"
+          ],
+          "title": "Eval Framework",
+          "type": "string"
+        },
+        "enable_benchmarks": {
+          "default": false,
+          "description": "Generate DeepEval benchmark scaffold under backend/tests/benchmarks/. Requires eval_framework='deepeval'.",
+          "title": "Enable Benchmarks",
+          "type": "boolean"
+        }
+      },
+      "title": "TestingConfig",
+      "type": "object"
+    },
+    "ToolConfig": {
+      "description": "A single LangChain / MCP tool wired into an agent.",
+      "properties": {
+        "name": {
+          "description": "Python identifier used as tool function name",
+          "title": "Name",
+          "type": "string"
+        },
+        "description": {
+          "description": "Tool description shown to the LLM",
+          "title": "Description",
+          "type": "string"
+        },
+        "mcp_resource": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "e.g. 'execute_sql' from mcp_server",
+          "title": "Mcp Resource"
+        }
+      },
+      "required": [
+        "name",
+        "description"
+      ],
+      "title": "ToolConfig",
+      "type": "object"
+    },
+    "WorkflowConfig": {
+      "description": "LangGraph StateGraph options \u2192 workflow.py",
+      "properties": {
+        "enable_feedback_loop": {
+          "default": true,
+          "description": "Wire feedback \u2192 improve_answer \u2192 feedback loop in the graph",
+          "title": "Enable Feedback Loop",
+          "type": "boolean"
+        },
+        "enable_validation_node": {
+          "default": true,
+          "description": "Keep validation_node in graph even when no agent needs_validation",
+          "title": "Enable Validation Node",
+          "type": "boolean"
+        },
+        "router_llm_model": {
+          "$ref": "#/$defs/LLMModel",
+          "default": "gpt-4o-mini",
+          "description": "Fast model used in query_router_node classification"
+        },
+        "router_llm_provider": {
+          "default": "openai",
+          "description": "LLM provider used in query_router_node classification.",
+          "enum": [
+            "openai",
+            "anthropic"
+          ],
+          "title": "Router Llm Provider",
+          "type": "string"
+        },
+        "default_intent": {
+          "default": "sql",
+          "description": "Fallback intent when router cannot classify query",
+          "title": "Default Intent",
+          "type": "string"
+        },
+        "max_feedback_attempts": {
+          "default": 3,
+          "maximum": 10,
+          "minimum": 1,
+          "title": "Max Feedback Attempts",
+          "type": "integer"
+        },
+        "enable_checkpointing": {
+          "default": false,
+          "description": "Persist LangGraph state via AsyncPostgresSaver. Requires database.backend='postgres'.",
+          "title": "Enable Checkpointing",
+          "type": "boolean"
+        }
+      },
+      "title": "WorkflowConfig",
+      "type": "object"
+    }
+  },
+  "description": "Root model \u2014 the full project.yaml document.\n\nExample project.yaml:\n----------------------\nmetadata:\n  name: my_agent_api\n  description: My first agentic project\n  python_version: \"3.11\"\n\nagents:\n  - key: sql\n    class_name: SQLAgent\n    llm_model: gpt-4o-mini\n    tools:\n      - name: execute_sql\n        description: Run a SQL query against the database\n        mcp_resource: execute_sql\n    needs_validation: true\n\ndatabase:\n  backend: postgres\n  tables: [orders, customers, products]\n\nworkflow:\n  enable_feedback_loop: true\n  enable_validation_node: true\n  default_intent: sql\n  router_llm_provider: openai   # default; set \"anthropic\" to use ChatAnthropic\n\napi:\n  title: My Agentic API\n  query_max_length: 2000\n  cors:\n    origins: [\"http://localhost:3000\"]\n\nobservability:\n  enable_tracing: true\n  structured_logging: false     # default; set true to use structlog JSON logging\n\nsecurity:\n  auth_type: api_key\n  api_key_env_var: MY_API_KEY\n\nci:\n  provider: github              # default: none (opt-in)\n  python_version: \"3.12\"\n  installer: uv                 # uv | pip | poetry\n\ndevelopment:\n  pre_commit: true              # default: false (opt-in)\n\ntesting:\n  eval_framework: deepeval      # default: none (opt-in)\n  enable_benchmarks: true       # default: false (opt-in)\n\nenable_provider_registry: false  # default; set true to generate backend/config/provider_registry.py",
+  "properties": {
+    "metadata": {
+      "$ref": "#/$defs/ProjectMetadata"
+    },
+    "agents": {
+      "items": {
+        "$ref": "#/$defs/AgentConfig"
+      },
+      "minItems": 1,
+      "title": "Agents",
+      "type": "array"
+    },
+    "database": {
+      "$ref": "#/$defs/DatabaseConfig"
+    },
+    "workflow": {
+      "$ref": "#/$defs/WorkflowConfig"
+    },
+    "api": {
+      "$ref": "#/$defs/APIConfig"
+    },
+    "observability": {
+      "$ref": "#/$defs/ObservabilityConfig"
+    },
+    "security": {
+      "$ref": "#/$defs/SecurityConfig"
+    },
+    "ci": {
+      "$ref": "#/$defs/CiConfig"
+    },
+    "development": {
+      "$ref": "#/$defs/DevelopmentConfig"
+    },
+    "testing": {
+      "$ref": "#/$defs/TestingConfig"
+    },
+    "enable_provider_registry": {
+      "default": false,
+      "description": "Generate backend/config/provider_registry.py in the scaffolded project.",
+      "title": "Enable Provider Registry",
+      "type": "boolean"
+    }
+  },
+  "required": [
+    "metadata",
+    "agents"
+  ],
+  "title": "ProjectConfig",
+  "type": "object"
+}
