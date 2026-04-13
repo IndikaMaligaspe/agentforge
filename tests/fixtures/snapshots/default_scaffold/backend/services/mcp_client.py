@@ -71,6 +71,6 @@ async def get_mcp_tools(auth_token: str | None = None) -> list[BaseTool]:
         logger.info("Loaded %d tool(s) from MCP servers", len(tools))
         return tools
 
-    except Exception as exc:  # noqa: BLE001
-        logger.error("Failed to load MCP tools: %s", exc)
+    except Exception:  # noqa: BLE001
+        logger.exception("Failed to load MCP tools")
         return []

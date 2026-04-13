@@ -7,6 +7,7 @@ Covers:
 - Rendered file contains the required import statements.
 - Rendered file is syntactically valid Python (compile check).
 - pyproject.toml includes langchain-mcp-adapters only when has_mcp is True.
+- Exception logging uses logger.exception (full traceback), not logger.error.
 """
 from pathlib import Path
 
@@ -197,3 +198,13 @@ def test_pyproject_excludes_langchain_mcp_adapters_when_no_mcp():
     """pyproject.toml must NOT list langchain-mcp-adapters when has_mcp is False."""
     content = _render_pyproject(_make_config_no_mcp())
     assert "langchain-mcp-adapters" not in content
+
+
+# ── Exception logging loudness ────────────────────────────────────────────────
+
+def test_rendered_file_uses_logger_exception_not_logger_error():
+    """Rendered MCP client must use logger.exception for full traceback capture."""
+    rendered = _render_map(_make_config_with_mcp())
+    content = rendered[MCP_OUTPUT_PATH]
+    assert "logger.exception(" in content
+    assert "logger.error(" not in content
