@@ -1,0 +1,76 @@
+# WARNING: langchain-mcp-adapters is pre-1.0 and has renamed classes across minor releases.
+# Review this file after any upgrade. The classes StreamableHttpConnection and
+# MultiServerMCPClient are pinned to >=0.1.0,<0.2.0 — verify import names against
+# the upstream changelog before bumping the pin.
+"""MCP client for tool integration.
+
+Reads MCP server configuration from the backend settings module
+(backend.config.settings) or from environment variables as fallbacks.
+"""
+
+from datetime import timedelta
+
+from langchain_core.tools import BaseTool
+from langchain_mcp_adapters.client import MultiServerMCPClient, StreamableHttpConnection
+
+from backend.config.settings import settings
+from backend.observability.logging import get_logger
+
+logger = get_logger("mcp_client")
+
+
+async def get_mcp_tools(auth_token: str | None = None) -> list[BaseTool]:
+    """Get tools from all configured MCP servers.
+
+    Args:
+        auth_token: Optional bearer token forwarded to every MCP server.
+
+    Returns:
+        List of LangChain BaseTool instances from all reachable MCP servers.
+        Returns an empty list when no servers are configured or all fail.
+    """
+    if not getattr(settings, "MCP_SERVERS", None):
+        logger.info("No MCP servers configured — skipping MCP tool load")
+        return []
+
+    try:
+        server_connections: dict[str, StreamableHttpConnection] = {}
+
+        for server_name, server_config in settings.MCP_SERVERS.items():
+            url = server_config.get("url")
+            timeout_seconds = server_config.get("timeout", getattr(settings, "MCP_TIMEOUT", 30))
+
+            if not url:
+                logger.warning("No URL configured for MCP server '%s' — skipping", server_name)
+                continue
+
+            logger.info("Configuring MCP server '%s'", server_name)
+
+            headers: dict[str, str] = {}
+            if auth_token:
+                headers["Authorization"] = f"Bearer {auth_token}"
+
+            if "headers" in server_config:
+                headers.update(server_config["headers"])
+
+            server_connections[server_name] = StreamableHttpConnection(
+                url=url,
+                timeout=timedelta(seconds=timeout_seconds),
+                transport="streamable_http",
+                headers=headers if headers else None,
+            )
+
+        if not server_connections:
+            logger.warning("No valid MCP server connections could be built")
+            return []
+
+        logger.info("Initialising MultiServerMCPClient with %d server(s)", len(server_connections))
+        client = MultiServerMCPClient(server_connections)
+
+        tools = await client.get_tools()
+        logger.info("Loaded %d tool(s) from MCP servers", len(tools))
+        return tools
+
+    except Exception as exc:  # noqa: BLE001
+        logger.error("Failed to load MCP tools: %s", exc)
+        return []

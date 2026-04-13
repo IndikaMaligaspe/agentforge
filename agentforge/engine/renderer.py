@@ -283,6 +283,13 @@ class TemplateRenderer:
         data["dev_pre_commit"]              = config.development.pre_commit
         # Top-level feature flags
         data["enable_provider_registry"]    = config.enable_provider_registry
+        # Computed flag: true when any agent tool references an MCP resource.
+        # Used by mcp_client.py.j2 predicate and pyproject.toml.j2 dependency block.
+        data["has_mcp"] = any(
+            getattr(tool, "mcp_resource", None)
+            for agent in config.agents
+            for tool in agent.tools
+        )
         return data
 
 
@@ -348,4 +355,11 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
     # ── Pre-commit hooks scaffold ─────────────────────────────────────────────
     ("precommit_config.yaml.j2",     ".pre-commit-config.yaml",
      lambda c: c.development.pre_commit),
+    # ── MCP client scaffold ───────────────────────────────────────────────────
+    ("mcp_client.py.j2",             "backend/services/mcp_client.py",
+     lambda c: any(
+         getattr(tool, "mcp_resource", None)
+         for agent in c.agents
+         for tool in agent.tools
+     )),
 ]
