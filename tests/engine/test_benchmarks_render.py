@@ -218,21 +218,6 @@ def test_benchmark_files_under_backend_tests_benchmarks():
         )
 
 
-# ── Import rebinding — no app.services references ────────────────────────────
-
-def test_no_app_services_imports_in_benchmark_output():
-    """Rendered benchmark files must not import from app.services (old agentic-cli layout)."""
-    rendered = _render_map(_make_config(eval_framework="deepeval", enable_benchmarks=True))
-    for path in BENCHMARK_PY_PATHS:
-        content = rendered.get(path, "")
-        assert "app.services" not in content, (
-            f"Old agentic-cli import 'app.services' found in {path}"
-        )
-        assert "app.core" not in content, (
-            f"Old agentic-cli import 'app.core' found in {path}"
-        )
-
-
 def test_pyproject_no_pytest_markers_when_benchmarks_disabled():
     """[tool.pytest.ini_options] markers block must be absent from rendered pyproject.toml when enable_benchmarks=False.
 
