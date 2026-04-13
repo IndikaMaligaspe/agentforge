@@ -209,71 +209,39 @@ def test_docker_compose_sqlite_has_no_db_service():
 
 # ── .env.example driver strings ───────────────────────────────────────────────
 
-def test_env_example_postgres_driver():
-    """.env.example must use postgresql+psycopg:// for postgres backend."""
+@pytest.mark.parametrize("backend, expected_driver", [
+    ("postgres", "postgresql+psycopg://"),
+    ("mysql", "mysql+pymysql://"),
+    ("sqlite", "sqlite:///./app.db"),
+])
+def test_env_driver_string(backend: str, expected_driver: str):
+    """.env.example must use the correct driver URL scheme for each backend."""
     renderer = TemplateRenderer()
-    config = _make_config("postgres", use_alembic=False)
+    config = _make_config(backend, use_alembic=False)
     ctx = renderer._build_context(config)
     tmpl = renderer._env.get_template(".env.example.j2")
     content = tmpl.render(**ctx)
-    assert "postgresql+psycopg://" in content
-
-
-def test_env_example_mysql_driver():
-    """.env.example must use mysql+pymysql:// for mysql backend."""
-    renderer = TemplateRenderer()
-    config = _make_config("mysql", use_alembic=False)
-    ctx = renderer._build_context(config)
-    tmpl = renderer._env.get_template(".env.example.j2")
-    content = tmpl.render(**ctx)
-    assert "mysql+pymysql://" in content
-
-
-def test_env_example_sqlite_driver():
-    """.env.example must use sqlite:///./app.db for sqlite backend."""
-    renderer = TemplateRenderer()
-    config = _make_config("sqlite", use_alembic=False)
-    ctx = renderer._build_context(config)
-    tmpl = renderer._env.get_template(".env.example.j2")
-    content = tmpl.render(**ctx)
-    assert "sqlite:///./app.db" in content
+    assert expected_driver in content
 
 
 # ── pyproject.toml driver dependencies ────────────────────────────────────────
 
-def test_pyproject_postgres_uses_psycopg():
-    """pyproject.toml must list psycopg[binary] for postgres backend."""
+@pytest.mark.parametrize("backend, expected_present, expected_absent", [
+    ("postgres", ["psycopg[binary]", "alembic"], []),
+    ("mysql", ["pymysql", "alembic"], ["mysqlclient"]),
+    ("sqlite", ["alembic"], ["psycopg", "pymysql"]),
+])
+def test_pyproject_driver_dep(backend: str, expected_present: list, expected_absent: list):
+    """pyproject.toml must list the correct driver dependencies per backend."""
     renderer = TemplateRenderer()
-    config = _make_config("postgres", use_alembic=True)
+    config = _make_config(backend, use_alembic=True)
     ctx = renderer._build_context(config)
     tmpl = renderer._env.get_template("pyproject.toml.j2")
     content = tmpl.render(**ctx)
-    assert "psycopg[binary]" in content
-    assert "alembic" in content
-
-
-def test_pyproject_mysql_uses_pymysql():
-    """pyproject.toml must list pymysql for mysql backend."""
-    renderer = TemplateRenderer()
-    config = _make_config("mysql", use_alembic=True)
-    ctx = renderer._build_context(config)
-    tmpl = renderer._env.get_template("pyproject.toml.j2")
-    content = tmpl.render(**ctx)
-    assert "pymysql" in content
-    assert "alembic" in content
-    assert "mysqlclient" not in content
-
-
-def test_pyproject_sqlite_no_driver_dep():
-    """pyproject.toml must NOT list psycopg or pymysql for sqlite backend."""
-    renderer = TemplateRenderer()
-    config = _make_config("sqlite", use_alembic=True)
-    ctx = renderer._build_context(config)
-    tmpl = renderer._env.get_template("pyproject.toml.j2")
-    content = tmpl.render(**ctx)
-    assert "psycopg" not in content
-    assert "pymysql" not in content
-    assert "alembic" in content
+    for dep in expected_present:
+        assert dep in content, f"Expected '{dep}' in pyproject.toml for backend={backend}"
+    for dep in expected_absent:
+        assert dep not in content, f"'{dep}' must not appear in pyproject.toml for backend={backend}"
 
 
 def test_pyproject_alembic_always_present():
