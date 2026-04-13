@@ -241,6 +241,7 @@ class TemplateRenderer:
         data["description"]                 = config.metadata.description
         data["python_version"]              = config.metadata.python_version
         data["author"]                      = config.metadata.author
+        # Schema field is `email`; exposed as `author_email` to match the TOML authors table key.
         data["author_email"]                = config.metadata.email
         data["agents_list"]                 = [a.model_dump() for a in config.agents]
         data["agent_keys"]                  = [a.key for a in config.agents]

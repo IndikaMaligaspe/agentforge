@@ -134,6 +134,27 @@ def test_env_py_uses_sync_engine():
     assert "async_engine_from_config" not in env_py
 
 
+def test_env_py_raises_on_missing_db_url():
+    """env.py must raise RuntimeError when DATABASE_URL is not set (not KeyError)."""
+    rendered = _render_map(_make_config("postgres", use_alembic=True))
+    env_py = rendered["backend/migrations/env.py"]
+    assert "RuntimeError" in env_py
+    assert "is not set; cannot run Alembic migrations" in env_py
+    # os.environ.get() must be used — not the bare key-access form that raises KeyError
+    assert "os.environ.get(" in env_py
+    assert 'os.environ["DATABASE_URL"]' not in env_py
+
+
+def test_env_py_raises_on_missing_base():
+    """env.py must raise RuntimeError (not silently set target_metadata=None) when Base import fails."""
+    rendered = _render_map(_make_config("postgres", use_alembic=True))
+    env_py = rendered["backend/migrations/env.py"]
+    assert "RuntimeError" in env_py
+    assert "backend/db/base.py" in env_py
+    # The silent fallback must not appear
+    assert "target_metadata = None" not in env_py
+
+
 # ── script.py.mako content ────────────────────────────────────────────────────
 
 @pytest.mark.parametrize("backend", ["postgres", "mysql", "sqlite"])
@@ -264,3 +285,16 @@ def test_pyproject_alembic_always_present():
         tmpl = renderer._env.get_template("pyproject.toml.j2")
         content = tmpl.render(**ctx)
         assert "alembic" in content, f"alembic missing for backend={backend}"
+
+
+def test_pyproject_author_email_matches_config():
+    """pyproject.toml must contain a non-empty author email matching the input config."""
+    renderer = TemplateRenderer()
+    config = _make_config("postgres", use_alembic=False)
+    ctx = renderer._build_context(config)
+    tmpl = renderer._env.get_template("pyproject.toml.j2")
+    content = tmpl.render(**ctx)
+    # The email from ProjectMetadata must appear verbatim in the authors table.
+    assert 'email = "test@example.com"' in content
+    # Guard: author_email alias must be non-empty in the render context.
+    assert ctx["author_email"] == "test@example.com"
