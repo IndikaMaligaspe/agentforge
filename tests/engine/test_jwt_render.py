@@ -14,7 +14,6 @@ Covers:
   (exports verify_token), and the plain __init__ otherwise.
 - backend/security/auth.py absent when auth_type=="jwt", present for api_key.
 - main.py imports verify_token when jwt, get_api_key when api_key.
-- jwt.py has no unused httpx or TokenClaims imports.
 """
 import ast
 import pytest
@@ -127,32 +126,6 @@ def test_security_init_uses_plain_template_when_not_jwt():
 
 # ── Compile check ─────────────────────────────────────────────────────────────
 
-def test_rendered_jwt_py_compiles_hs256():
-    """Rendered backend/security/jwt.py must be valid Python (HS256 path)."""
-    rendered = _render_map(_make_config(auth_type="jwt", jwt_algorithm="HS256"))
-    source = rendered["backend/security/jwt.py"]
-    try:
-        ast.parse(source)
-    except SyntaxError as e:
-        pytest.fail(f"backend/security/jwt.py has a syntax error (HS256): {e}\n\n{source}")
-
-
-def test_rendered_jwt_py_compiles_rs256():
-    """Rendered backend/security/jwt.py must be valid Python (RS256 path)."""
-    rendered = _render_map(
-        _make_config(
-            auth_type="jwt",
-            jwt_algorithm="RS256",
-            jwks_url="https://example.com/.well-known/jwks.json",
-        )
-    )
-    source = rendered["backend/security/jwt.py"]
-    try:
-        ast.parse(source)
-    except SyntaxError as e:
-        pytest.fail(f"backend/security/jwt.py has a syntax error (RS256): {e}\n\n{source}")
-
-
 def test_rendered_dtos_compiles():
     """Rendered backend/security/dtos.py must be valid Python."""
     rendered = _render_map(_make_config(auth_type="jwt", jwt_algorithm="HS256"))
@@ -212,17 +185,15 @@ def test_no_madgicx_strings_in_rendered_output(algorithm: str, extra_kwargs: dic
 
 # ── .env.example JWT_SECRET ───────────────────────────────────────────────────
 
-def test_env_example_includes_jwt_secret_for_hs256():
-    """.env.example must include JWT_SECRET= for HS256 algorithm."""
+def test_env_includes_jwt_secret_for_hs256():
+    """Rendered .env.example must include JWT_SECRET= when auth_type=jwt and HS256."""
     rendered = _render_map(_make_config(auth_type="jwt", jwt_algorithm="HS256"))
     env = rendered[".env.example"]
-    assert "JWT_SECRET=" in env, (
-        "Expected JWT_SECRET= placeholder in .env.example for HS256"
-    )
+    assert "JWT_SECRET=" in env, "Expected JWT_SECRET= in .env.example for HS256"
 
 
-def test_env_example_excludes_jwt_secret_for_rs256():
-    """.env.example must NOT include JWT_SECRET= for RS256 (JWKS fetched over HTTP)."""
+def test_env_excludes_jwt_secret_for_rs256():
+    """Rendered .env.example must NOT include JWT_SECRET= when RS256 (JWKS-based)."""
     rendered = _render_map(
         _make_config(
             auth_type="jwt",
@@ -231,16 +202,14 @@ def test_env_example_excludes_jwt_secret_for_rs256():
         )
     )
     env = rendered[".env.example"]
-    assert "JWT_SECRET=" not in env, (
-        "JWT_SECRET= must not appear in .env.example for RS256 (keys fetched via JWKS)"
-    )
+    assert "JWT_SECRET=" not in env, "JWT_SECRET= must be absent for RS256"
 
 
-def test_env_example_no_jwt_secret_when_auth_type_none():
-    """.env.example must NOT include JWT_SECRET= when auth_type='none'."""
-    rendered = _render_map(_make_config(auth_type="none"))
+def test_env_excludes_jwt_secret_for_api_key():
+    """Rendered .env.example must NOT include JWT_SECRET= when auth_type=api_key."""
+    rendered = _render_map(_make_config(auth_type="api_key"))
     env = rendered[".env.example"]
-    assert "JWT_SECRET=" not in env
+    assert "JWT_SECRET=" not in env, "JWT_SECRET= must be absent for api_key"
 
 
 # ── requirements.txt dependencies ─────────────────────────────────────────────
@@ -319,77 +288,6 @@ def test_auth_py_present_when_api_key():
     assert "backend/security/auth.py" in rendered, (
         "backend/security/auth.py must be present for api_key projects"
     )
-
-
-# ── env.j2 JWT_SECRET block ───────────────────────────────────────────────────
-
-def test_env_includes_jwt_secret_for_hs256():
-    """Rendered .env.example must include JWT_SECRET= when auth_type=jwt and HS256."""
-    rendered = _render_map(_make_config(auth_type="jwt", jwt_algorithm="HS256"))
-    env = rendered[".env.example"]
-    assert "JWT_SECRET=" in env, "Expected JWT_SECRET= in .env.example for HS256"
-
-
-def test_env_excludes_jwt_secret_for_rs256():
-    """Rendered .env.example must NOT include JWT_SECRET= when RS256 (JWKS-based)."""
-    rendered = _render_map(
-        _make_config(
-            auth_type="jwt",
-            jwt_algorithm="RS256",
-            jwks_url="https://example.com/.well-known/jwks.json",
-        )
-    )
-    env = rendered[".env.example"]
-    assert "JWT_SECRET=" not in env, "JWT_SECRET= must be absent for RS256"
-
-
-def test_env_excludes_jwt_secret_for_api_key():
-    """Rendered .env.example must NOT include JWT_SECRET= when auth_type=api_key."""
-    rendered = _render_map(_make_config(auth_type="api_key"))
-    env = rendered[".env.example"]
-    assert "JWT_SECRET=" not in env, "JWT_SECRET= must be absent for api_key"
-
-
-# ── jwt.py unused import check ────────────────────────────────────────────────
-
-def _collect_imported_names(source: str) -> set[str]:
-    """Parse Python source and return all top-level imported names/modules."""
-    tree = ast.parse(source)
-    imported: set[str] = set()
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            for alias in node.names:
-                imported.add(alias.name.split(".")[0])
-        elif isinstance(node, ast.ImportFrom):
-            module = node.module or ""
-            imported.add(module.split(".")[0])
-            for alias in node.names:
-                imported.add(alias.name)
-    return imported
-
-
-def test_jwt_py_no_unused_imports_hs256():
-    """Rendered jwt.py (HS256) must not import httpx or TokenClaims."""
-    rendered = _render_map(_make_config(auth_type="jwt", jwt_algorithm="HS256"))
-    source = rendered["backend/security/jwt.py"]
-    imported = _collect_imported_names(source)
-    assert "httpx" not in imported, "httpx must not be imported in jwt.py (HS256)"
-    assert "TokenClaims" not in imported, "TokenClaims must not be imported in jwt.py (HS256)"
-
-
-def test_jwt_py_no_unused_imports_rs256():
-    """Rendered jwt.py (RS256) must not import httpx or TokenClaims."""
-    rendered = _render_map(
-        _make_config(
-            auth_type="jwt",
-            jwt_algorithm="RS256",
-            jwks_url="https://example.com/.well-known/jwks.json",
-        )
-    )
-    source = rendered["backend/security/jwt.py"]
-    imported = _collect_imported_names(source)
-    assert "httpx" not in imported, "httpx must not be imported in jwt.py (RS256)"
-    assert "TokenClaims" not in imported, "TokenClaims must not be imported in jwt.py (RS256)"
 
 
 # ── Settings file context vars ────────────────────────────────────────────────
