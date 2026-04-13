@@ -1,0 +1,101 @@
+# examples/project.full.yaml — maximalist config exercising every feature added in TODOs 1-9.
+# Use this as the source for end-to-end scaffold testing.
+
+metadata:
+  name: full_stack_agent
+  description: Maximalist AgentForge project exercising every opt-in feature
+  python_version: "3.12"
+  author: AgentForge Example
+  email: example@agentforge.dev
+
+agents:
+  - key: data
+    class_name: DataAgent
+    llm_model: gpt-4o
+    system_prompt: |
+      You are a data analyst with access to database tools via MCP.
+      Always validate queries before executing them.
+    tools:
+      - name: execute_sql
+        description: Run a SQL query against the database
+        mcp_resource: execute_sql
+      - name: describe_table
+        description: Get the schema of a database table
+        mcp_resource: describe_table
+    needs_validation: true
+    extra_return_keys: ["query", "execution_time"]
+
+  - key: analytics
+    class_name: AnalyticsAgent
+    llm_model: gpt-4o-mini
+    system_prompt: |
+      You are an analytics assistant that helps users analyse data.
+    tools:
+      - name: generate_chart
+        description: Generate a chart from data
+        mcp_resource: generate_chart
+    needs_validation: false
+
+database:
+  backend: postgres
+  tables:
+    - users
+    - orders
+    - products
+  connection_env_var: DATABASE_URL
+  pool_size: 10
+  max_overflow: 20
+  use_alembic: true   # TODO-1: generates alembic.ini + backend/migrations/
+
+workflow:
+  enable_feedback_loop: true
+  enable_validation_node: true
+  router_llm_model: gpt-4o-mini
+  router_llm_provider: openai
+  default_intent: data
+  max_feedback_attempts: 3
+  enable_checkpointing: true   # TODO-9: requires backend=postgres
+
+api:
+  title: Full Stack Agent API
+  query_max_length: 4000
+  endpoints:
+    - /query
+    - /analyse
+  cors:
+    origins:
+      - "http://localhost:3000"
+    allow_credentials: false
+
+observability:
+  enable_tracing: true
+  tracing_provider: langfuse
+  context_fields:
+    - request_id
+    - user_id
+    - session_id
+  log_rotation_bytes: 10485760
+  log_backup_count: 5
+  structured_logging: false
+
+security:
+  auth_type: jwt          # TODO-8: JWT auth scaffold
+  jwt_algorithm: RS256    # RS256 — no JWT_SECRET in .env.example
+  jwks_url: https://example.com/.well-known/jwks.json
+  jwt_issuer: https://example.com
+  jwt_audience: full-stack-agent-api
+  enable_ip_pseudonymization: true
+
+ci:
+  provider: github         # TODO-2: .github/workflows/ci.yml
+  python_version: "3.12"
+  installer: uv
+
+development:
+  pre_commit: true         # TODO-3: .pre-commit-config.yaml
+
+testing:
+  eval_framework: deepeval   # TODO-7: benchmark scaffold
+  enable_benchmarks: true
+
+enable_provider_registry: false

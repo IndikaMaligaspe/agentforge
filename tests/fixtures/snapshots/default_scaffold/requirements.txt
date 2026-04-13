@@ -24,6 +24,9 @@ python-json-logger>=2.0.7
 python-multipart>=0.0.7
 cryptography>=42.0.0
 
+# MCP client — pinned to <0.2.0; see backend/services/mcp_client.py for upgrade notes
+langchain-mcp-adapters>=0.1.0,<0.2.0
+
 # Development tools
 pytest>=8.0.0
 pytest-asyncio>=0.23.0

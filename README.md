@@ -71,6 +71,7 @@ agentforge new --config ./custom-project.yaml
 agentforge new --output ./my-project-dir
 agentforge new --dry-run  # Preview files without writing
 agentforge new --overwrite  # Overwrite existing files
+agentforge new --git-init  # Run git init + initial commit after scaffolding
 ```
 
 ### `agentforge add agent`
@@ -225,7 +226,7 @@ security:
 
 ## Optional features
 
-The scaffolder exposes three opt-in feature flags for the generated project. All default to the pre-existing behaviour, so existing `project.yaml` files continue to work unchanged.
+The scaffolder exposes opt-in feature flags. All default to `none` / `False`, so existing `project.yaml` files regenerate unchanged.
 
 ### `observability.structured_logging` (default: `false`)
 
@@ -238,6 +239,109 @@ Selects the LLM provider used by `query_router_node.py` for intent classificatio
 ### `enable_provider_registry` (default: `false`)
 
 Generates `backend/config/provider_registry.py` and a sample `backend/config/providers.yaml` in the scaffolded project. The registry provides a generic abstraction for registering and looking up third-party data providers at runtime.
+
+## Database migrations (Alembic)
+
+Set `database.use_alembic: true` to scaffold an Alembic migration tree under `backend/migrations/`. The `database.backend` field controls which database driver appears in the generated `alembic.ini` and `requirements.txt`.
+
+```yaml
+database:
+  backend: postgres   # postgres | mysql | sqlite
+  use_alembic: true
+```
+
+Generated files: `alembic.ini`, `backend/migrations/env.py`, `backend/migrations/script.py.mako`.
+Makefile targets `db-migrate` and `db-revision` are added when `use_alembic: true`.
+
+## CI scaffolding
+
+Set `ci.provider: github` to generate a GitHub Actions workflow at `.github/workflows/ci.yml`. The `installer` field controls which package manager installs dependencies.
+
+```yaml
+ci:
+  provider: github       # github | none (default: none)
+  python_version: "3.12"
+  installer: uv          # uv | pip | poetry
+```
+
+## Pre-commit hooks
+
+Set `development.pre_commit: true` to generate `.pre-commit-config.yaml` with ruff linting and formatting hooks.
+
+```yaml
+development:
+  pre_commit: true   # default: false
+```
+
+## --git-init flag
+
+Pass `--git-init` to `agentforge new` to run `git init` and create an initial commit after scaffolding. Skipped silently if `git` is not on `PATH`.
+
+```bash
+agentforge new --git-init
+```
+
+## Makefile
+
+A `Makefile` is always generated. Targets are conditional: `db-migrate` / `db-revision` appear only when `database.use_alembic: true`; `test-benchmarks` appears only when `testing.enable_benchmarks: true`. Run `make help` in the generated project to see active targets.
+
+## MCP client
+
+When any agent tool sets `mcp_resource`, agentforge generates `backend/services/mcp_client.py` using `langchain-mcp-adapters`. The client reads MCP server URLs from the `MCP_SERVERS` environment variable (JSON object).
+
+```yaml
+agents:
+  - key: data
+    class_name: DataAgent
+    tools:
+      - name: query_db
+        description: Run a database query
+        mcp_resource: query_db   # triggers MCP client generation
+```
+
+## DeepEval benchmarks
+
+Set `testing.eval_framework: deepeval` and `testing.enable_benchmarks: true` to scaffold a benchmark suite under `backend/tests/benchmarks/`. No Slack integration is included.
+
+```yaml
+testing:
+  eval_framework: deepeval   # default: none
+  enable_benchmarks: true    # default: false
+```
+
+## JWT authentication
+
+Set `security.auth_type: jwt` to scaffold JWT verification under `backend/security/`. Supports HS256 (symmetric secret) and RS256 (JWKS endpoint).
+
+```yaml
+# HS256 — symmetric secret read from JWT_SECRET env var
+security:
+  auth_type: jwt
+  jwt_algorithm: HS256
+
+# RS256 — public keys fetched from a JWKS endpoint
+security:
+  auth_type: jwt
+  jwt_algorithm: RS256
+  jwks_url: https://example.com/.well-known/jwks.json
+  jwt_issuer: https://example.com
+  jwt_audience: my-api
+```
+
+Generated files: `backend/security/jwt.py`, `backend/security/dtos.py`, `backend/security/jwt_settings.py`, `backend/security/__init__.py`. The HS256 path adds `JWT_SECRET=` to `.env.example`; RS256 does not.
+
+## Memory / checkpointing
+
+Set `workflow.enable_checkpointing: true` to scaffold LangGraph `AsyncPostgresSaver` checkpointing. Requires `database.backend: postgres`.
+
+```yaml
+database:
+  backend: postgres
+workflow:
+  enable_checkpointing: true   # default: false
+```
+
+Generated files: `backend/graph/checkpointer.py`, `backend/config/memory_settings.py`. Adds `langgraph-checkpoint-postgres` and `psycopg[binary,pool]` to `requirements.txt`.
 
 ### Customizing the answer shape
 
