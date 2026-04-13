@@ -369,3 +369,105 @@ def test_wizard_all_defaults_produces_valid_config(monkeypatch):
     assert config.api.title == "My Agentic API"
     assert config.observability.enable_tracing is False
     assert config.security.enable_auth is False
+
+
+# ── Extended database step (TODO-1): backend + use_alembic ────────────────────
+
+def test_step_database_includes_use_alembic_true(monkeypatch):
+    """step_database must pass use_alembic=True when ask_database_config returns it."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_database_config", lambda: {
+        "backend": "mysql",
+        "tables": [],
+        "connection_env_var": "DATABASE_URL",
+        "pool_size": 5,
+        "max_overflow": 10,
+        "use_alembic": True,
+    })
+
+    result = step_database({})
+    assert result["database"]["backend"] == "mysql"
+    assert result["database"]["use_alembic"] is True
+
+
+def test_step_database_includes_use_alembic_false(monkeypatch):
+    """step_database must pass use_alembic=False (default) when not requested."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_database_config", lambda: {
+        "backend": "sqlite",
+        "tables": [],
+        "connection_env_var": "DATABASE_URL",
+        "pool_size": 1,
+        "max_overflow": 0,
+        "use_alembic": False,
+    })
+
+    result = step_database({})
+    assert result["database"]["backend"] == "sqlite"
+    assert result["database"]["use_alembic"] is False
+
+
+def test_build_config_with_mysql_and_alembic():
+    """build_config must construct a valid ProjectConfig for mysql + use_alembic=True."""
+    partial = {
+        "metadata": {
+            "name": "mysql_proj",
+            "description": "desc",
+            "python_version": "3.11",
+            "author": "A",
+            "email": "a@b.com",
+        },
+        "agents": [_make_agent("sql", "SqlAgent")],
+        "database": {
+            "backend": "mysql",
+            "tables": [],
+            "connection_env_var": "DATABASE_URL",
+            "pool_size": 5,
+            "max_overflow": 10,
+            "use_alembic": True,
+        },
+        "workflow": {
+            "enable_feedback_loop": True,
+            "enable_validation_node": True,
+            "default_intent": "sql",
+            "max_feedback_attempts": 3,
+        },
+        "api": {
+            "title": "Test API",
+            "query_max_length": 2000,
+            "cors": {"origins": ["*"], "allow_credentials": False},
+        },
+        "observability": {
+            "enable_tracing": False,
+            "tracing_provider": "langfuse",
+            "context_fields": ["request_id"],
+            "log_rotation_bytes": 10_485_760,
+            "log_backup_count": 5,
+        },
+        "security": {
+            "enable_auth": False,
+            "api_key_env_var": "API_KEY",
+            "enable_ip_pseudonymization": False,
+        },
+    }
+
+    config = build_config(partial)
+
+    assert isinstance(config, ProjectConfig)
+    assert config.database.backend.value == "mysql"
+    assert config.database.use_alembic is True
+
+
+def test_step_database_sqlite_no_use_alembic_does_not_error(monkeypatch):
+    """sqlite + use_alembic=False must still produce a valid partial dict."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_database_config", lambda: {
+        "backend": "sqlite",
+        "tables": [],
+        "connection_env_var": "DATABASE_URL",
+        "pool_size": 1,
+        "max_overflow": 0,
+        "use_alembic": False,
+    })
+
+    result = step_database({"existing": "value"})
+    assert result["existing"] == "value"
+    assert result["database"]["backend"] == "sqlite"
+    assert result["database"]["use_alembic"] is False

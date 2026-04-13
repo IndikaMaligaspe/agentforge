@@ -141,6 +141,7 @@ class DatabaseConfig(BaseModel):
     )
     pool_size: int = Field(5, ge=1, le=100)
     max_overflow: int = Field(10, ge=0, le=200)
+    use_alembic: bool = Field(False, description="Generate Alembic migration scaffold under backend/migrations/")
 
 
 class WorkflowConfig(BaseModel):
@@ -294,11 +295,11 @@ class ProjectConfig(BaseModel):
     """
     metadata: ProjectMetadata
     agents: list[AgentConfig] = Field(..., min_length=1)
-    database: DatabaseConfig = Field(default_factory=DatabaseConfig)
-    workflow: WorkflowConfig = Field(default_factory=WorkflowConfig)
-    api: APIConfig = Field(default_factory=APIConfig)
-    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
-    security: SecurityConfig = Field(default_factory=SecurityConfig)
+    database: DatabaseConfig = Field(default_factory=lambda: DatabaseConfig())  # type: ignore[call-arg]
+    workflow: WorkflowConfig = Field(default_factory=lambda: WorkflowConfig())  # type: ignore[call-arg]
+    api: APIConfig = Field(default_factory=lambda: APIConfig())  # type: ignore[call-arg]
+    observability: ObservabilityConfig = Field(default_factory=lambda: ObservabilityConfig())  # type: ignore[call-arg]
+    security: SecurityConfig = Field(default_factory=lambda: SecurityConfig())  # type: ignore[call-arg]
     enable_provider_registry: bool = Field(
         False,
         description="Generate backend/config/provider_registry.py in the scaffolded project.",

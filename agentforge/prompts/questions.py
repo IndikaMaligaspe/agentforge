@@ -4,11 +4,11 @@ Individual question builders for the interactive wizard.
 import questionary
 from ..schema.models import AgentConfig, ToolConfig, LLMModel, DBBackend
 
-def ask_agent_config(existing_keys: set[str] = frozenset()) -> AgentConfig:
+def ask_agent_config(existing_keys: set[str] | None = None) -> AgentConfig:
     """Interactive prompt for creating a new agent configuration."""
     key = questionary.text(
         "Agent key (e.g. 'sql'):",
-        validate=lambda v: v not in existing_keys or "Key already exists",
+        validate=lambda v: v not in (existing_keys or set()) or "Key already exists",
     ).ask()
 
     class_name = questionary.text(
@@ -121,12 +121,18 @@ def ask_database_config():
         validate=lambda v: v.isdigit() and 0 <= int(v) <= 200 or "Must be a number between 0 and 200",
     ).ask()
     
+    use_alembic = questionary.confirm(
+        "Generate Alembic migration scaffold?",
+        default=False,
+    ).ask()
+
     return {
         "backend": backend,
         "tables": tables,
         "connection_env_var": connection_env_var,
         "pool_size": int(pool_size),
         "max_overflow": int(max_overflow),
+        "use_alembic": use_alembic,
     }
 
 def ask_workflow_config(agent_keys: list[str]):

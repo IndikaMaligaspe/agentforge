@@ -19,7 +19,7 @@ services:
       - MYSQL_DATABASE=${MYSQL_DATABASE}
       {% endif %}
       {% if enable_auth %}
-      - {{ api_key_env_var }}=${{{ api_key_env_var }}}
+      - {{ api_key_env_var }}=${{ '{' }}{{ api_key_env_var }}{{ '}' }}
       {% endif %}
       {% if enable_tracing %}
       - LANGFUSE_PUBLIC_KEY=${LANGFUSE_PUBLIC_KEY}

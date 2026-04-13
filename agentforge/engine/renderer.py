@@ -272,6 +272,8 @@ class TemplateRenderer:
         data["db_tables"]                   = config.database.tables
         data["db_connection_env_var"]       = config.database.connection_env_var
         data["db_pool_size"]                = config.database.pool_size
+        # Database migration aliases
+        data["db_use_alembic"]               = config.database.use_alembic
         # Top-level feature flags
         data["enable_provider_registry"]    = config.enable_provider_registry
         return data
@@ -326,4 +328,11 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
      lambda c: c.enable_provider_registry),
     ("providers.yaml.j2",           "backend/config/providers.yaml",
      lambda c: c.enable_provider_registry),
+    # ── Alembic migration scaffold ────────────────────────────────────────────
+    ("alembic.ini.j2",               "alembic.ini",
+     lambda c: c.database.use_alembic),
+    ("alembic/env.py.j2",            "backend/migrations/env.py",
+     lambda c: c.database.use_alembic),
+    ("alembic/script.py.mako.j2",    "backend/migrations/script.py.mako",
+     lambda c: c.database.use_alembic),
 ]
