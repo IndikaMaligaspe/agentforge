@@ -315,6 +315,7 @@ class DevelopmentConfig(BaseModel):
 
 class TestingConfig(BaseModel):
     """Opt-in evaluation framework and benchmark scaffold options."""
+    __test__ = False  # tell pytest this is not a test class
     eval_framework: Literal["none", "deepeval"] = Field(
         "none",
         description="Evaluation framework to use. 'deepeval' enables the benchmark scaffold.",

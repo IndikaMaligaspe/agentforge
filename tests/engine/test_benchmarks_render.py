@@ -231,3 +231,23 @@ def test_no_app_services_imports_in_benchmark_output():
         assert "app.core" not in content, (
             f"Old agentic-cli import 'app.core' found in {path}"
         )
+
+
+def test_pyproject_no_pytest_markers_when_benchmarks_disabled():
+    """[tool.pytest.ini_options] markers block must be absent from rendered pyproject.toml when enable_benchmarks=False.
+
+    The pyproject.toml.j2 template is rendered directly via the Jinja environment
+    because the renderer only wires it conditionally; this test validates the template
+    logic itself regardless of whether the renderer emits the file.
+    """
+    config = _make_config(eval_framework="none", enable_benchmarks=False)
+    renderer = TemplateRenderer()
+    ctx = renderer._build_context(config)
+    tmpl = renderer._env.get_template("pyproject.toml.j2")
+    content = tmpl.render(ctx)
+    assert "[tool.pytest.ini_options]" not in content, (
+        "pyproject.toml must not contain [tool.pytest.ini_options] when enable_benchmarks=False"
+    )
+    assert "markers" not in content, (
+        "pyproject.toml must not contain a markers entry when enable_benchmarks=False"
+    )

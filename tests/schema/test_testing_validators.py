@@ -70,3 +70,8 @@ def test_error_message_is_actionable():
     full_text = str(exc_info.value)
     assert "deepeval" in full_text
     assert "eval_framework" in full_text
+
+
+def test_testingconfig_not_collected_by_pytest():
+    from agentforge.schema.models import TestingConfig
+    assert TestingConfig.__test__ is False
