@@ -16,6 +16,8 @@ The schema is organized hierarchically:
     - CORSConfig (CORS settings)
   - ObservabilityConfig (logging and tracing)
   - SecurityConfig (auth and sanitization)
+  - CiConfig (CI provider settings)
+  - DevelopmentConfig (local development tooling)
 
 Each model includes field-level validation and documentation.
 """
@@ -141,6 +143,7 @@ class DatabaseConfig(BaseModel):
     )
     pool_size: int = Field(5, ge=1, le=100)
     max_overflow: int = Field(10, ge=0, le=200)
+    use_alembic: bool = Field(False, description="Generate Alembic migration scaffold under backend/migrations/")
 
 
 class WorkflowConfig(BaseModel):
@@ -236,6 +239,18 @@ class SecurityConfig(BaseModel):
     )
 
 
+class CiConfig(BaseModel):
+    """GitHub Actions CI scaffold options."""
+    provider: Literal["github", "none"] = "none"
+    python_version: str = "3.12"
+    installer: Literal["uv", "pip", "poetry"] = "uv"
+
+
+class DevelopmentConfig(BaseModel):
+    """Local development tooling scaffold options."""
+    pre_commit: bool = Field(False, description="Generate .pre-commit-config.yaml with ruff and common hooks")
+
+
 class ProjectMetadata(BaseModel):
     """Top-level project identity."""
     name: SlugStr = Field(..., description="Python package / GitHub repo name")
@@ -290,15 +305,25 @@ class ProjectConfig(BaseModel):
       enable_auth: true
       api_key_env_var: MY_API_KEY
 
+    ci:
+      provider: github              # default: none (opt-in)
+      python_version: "3.12"
+      installer: uv                 # uv | pip | poetry
+
+    development:
+      pre_commit: true              # default: false (opt-in)
+
     enable_provider_registry: false  # default; set true to generate backend/config/provider_registry.py
     """
     metadata: ProjectMetadata
     agents: list[AgentConfig] = Field(..., min_length=1)
-    database: DatabaseConfig = Field(default_factory=DatabaseConfig)
-    workflow: WorkflowConfig = Field(default_factory=WorkflowConfig)
-    api: APIConfig = Field(default_factory=APIConfig)
-    observability: ObservabilityConfig = Field(default_factory=ObservabilityConfig)
-    security: SecurityConfig = Field(default_factory=SecurityConfig)
+    database: DatabaseConfig = Field(default_factory=lambda: DatabaseConfig())  # type: ignore[call-arg]
+    workflow: WorkflowConfig = Field(default_factory=lambda: WorkflowConfig())  # type: ignore[call-arg]
+    api: APIConfig = Field(default_factory=lambda: APIConfig())  # type: ignore[call-arg]
+    observability: ObservabilityConfig = Field(default_factory=lambda: ObservabilityConfig())  # type: ignore[call-arg]
+    security: SecurityConfig = Field(default_factory=lambda: SecurityConfig())  # type: ignore[call-arg]
+    ci: CiConfig = Field(default_factory=lambda: CiConfig())  # type: ignore[call-arg]
+    development: DevelopmentConfig = Field(default_factory=lambda: DevelopmentConfig())  # type: ignore[call-arg]
     enable_provider_registry: bool = Field(
         False,
         description="Generate backend/config/provider_registry.py in the scaffolded project.",

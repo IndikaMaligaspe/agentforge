@@ -11,7 +11,7 @@ readme = "README.md"
 requires-python = ">={{ python_version }}"
 license = {text = "MIT"}
 authors = [
-  {name = "{{ author }}", email = "{{ email }}"}
+  {name = "{{ author }}", email = "{{ author_email }}"}
 ]
 keywords = ["agents", "langchain", "langgraph", "llm"]
 classifiers = [
@@ -26,14 +26,12 @@ dependencies = [
   "pydantic>=2.7",
   "langgraph>=0.1",
   "langchain-openai>=0.1",
-  {% if db_backend == "postgres" %}
-  "psycopg2-binary>=2.9",
-  {% elif db_backend == "mysql" %}
-  "mysql-connector-python>=8.4",
-  {% elif db_backend == "sqlite" %}
   "sqlalchemy>=2.0",
-  {% elif db_backend == "bigquery" %}
-  "google-cloud-bigquery>=3.20",
+  "alembic>=1.13",
+  {% if db_backend == "postgres" %}
+  "psycopg[binary]>=3.1",
+  {% elif db_backend == "mysql" %}
+  "pymysql>=1.1",
   {% endif %}
   {% if enable_tracing %}
   "langfuse>=2.35",

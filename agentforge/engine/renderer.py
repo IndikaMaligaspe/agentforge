@@ -241,6 +241,7 @@ class TemplateRenderer:
         data["description"]                 = config.metadata.description
         data["python_version"]              = config.metadata.python_version
         data["author"]                      = config.metadata.author
+        # Schema field is `email`; exposed as `author_email` to match the TOML authors table key.
         data["author_email"]                = config.metadata.email
         data["agents_list"]                 = [a.model_dump() for a in config.agents]
         data["agent_keys"]                  = [a.key for a in config.agents]
@@ -272,6 +273,14 @@ class TemplateRenderer:
         data["db_tables"]                   = config.database.tables
         data["db_connection_env_var"]       = config.database.connection_env_var
         data["db_pool_size"]                = config.database.pool_size
+        # Database migration aliases
+        data["db_use_alembic"]               = config.database.use_alembic
+        # CI aliases — prefixed with ci_ to avoid shadowing metadata.python_version
+        data["ci_provider"]                 = config.ci.provider
+        data["ci_python_version"]           = config.ci.python_version
+        data["ci_installer"]                = config.ci.installer
+        # Development tooling aliases
+        data["dev_pre_commit"]              = config.development.pre_commit
         # Top-level feature flags
         data["enable_provider_registry"]    = config.enable_provider_registry
         return data
@@ -326,4 +335,17 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
      lambda c: c.enable_provider_registry),
     ("providers.yaml.j2",           "backend/config/providers.yaml",
      lambda c: c.enable_provider_registry),
+    # ── Alembic migration scaffold ────────────────────────────────────────────
+    ("alembic.ini.j2",               "alembic.ini",
+     lambda c: c.database.use_alembic),
+    ("alembic/env.py.j2",            "backend/migrations/env.py",
+     lambda c: c.database.use_alembic),
+    ("alembic/script.py.mako.j2",    "backend/migrations/script.py.mako",
+     lambda c: c.database.use_alembic),
+    # ── GitHub Actions CI scaffold ────────────────────────────────────────────
+    ("ci/github_ci.yml.j2",          ".github/workflows/ci.yml",
+     lambda c: c.ci.provider == "github"),
+    # ── Pre-commit hooks scaffold ─────────────────────────────────────────────
+    ("precommit_config.yaml.j2",     ".pre-commit-config.yaml",
+     lambda c: c.development.pre_commit),
 ]
