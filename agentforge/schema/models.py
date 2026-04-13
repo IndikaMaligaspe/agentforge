@@ -17,6 +17,7 @@ The schema is organized hierarchically:
   - ObservabilityConfig (logging and tracing)
   - SecurityConfig (auth and sanitization)
   - CiConfig (CI provider settings)
+  - DevelopmentConfig (local development tooling)
 
 Each model includes field-level validation and documentation.
 """
@@ -245,6 +246,11 @@ class CiConfig(BaseModel):
     installer: Literal["uv", "pip", "poetry"] = "uv"
 
 
+class DevelopmentConfig(BaseModel):
+    """Local development tooling scaffold options."""
+    pre_commit: bool = Field(False, description="Generate .pre-commit-config.yaml with ruff and common hooks")
+
+
 class ProjectMetadata(BaseModel):
     """Top-level project identity."""
     name: SlugStr = Field(..., description="Python package / GitHub repo name")
@@ -304,6 +310,9 @@ class ProjectConfig(BaseModel):
       python_version: "3.12"
       installer: uv                 # uv | pip | poetry
 
+    development:
+      pre_commit: true              # default: false (opt-in)
+
     enable_provider_registry: false  # default; set true to generate backend/config/provider_registry.py
     """
     metadata: ProjectMetadata
@@ -314,6 +323,7 @@ class ProjectConfig(BaseModel):
     observability: ObservabilityConfig = Field(default_factory=lambda: ObservabilityConfig())  # type: ignore[call-arg]
     security: SecurityConfig = Field(default_factory=lambda: SecurityConfig())  # type: ignore[call-arg]
     ci: CiConfig = Field(default_factory=lambda: CiConfig())  # type: ignore[call-arg]
+    development: DevelopmentConfig = Field(default_factory=lambda: DevelopmentConfig())  # type: ignore[call-arg]
     enable_provider_registry: bool = Field(
         False,
         description="Generate backend/config/provider_registry.py in the scaffolded project.",

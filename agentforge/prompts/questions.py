@@ -264,3 +264,15 @@ def ask_ci_config() -> dict:
         "python_version": python_version,
         "installer": installer,
     }
+
+def ask_development_config() -> dict:
+    """Interactive prompt for local development tooling configuration."""
+    pre_commit = questionary.confirm(
+        "Generate .pre-commit-config.yaml (ruff + common hooks)?",
+        default=False,
+    ).ask()
+
+    if not pre_commit:
+        return {"pre_commit": False}
+
+    return {"pre_commit": True}

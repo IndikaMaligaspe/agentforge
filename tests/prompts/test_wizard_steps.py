@@ -16,6 +16,7 @@ from agentforge.prompts.wizard import (
     step_api,
     step_observability,
     step_security,
+    step_development,
     step_ci,
     build_config,
 )
@@ -240,6 +241,40 @@ def test_step_security_merges_security_key(monkeypatch):
     assert result["security"]["enable_auth"] is False
 
 
+# ── step_development ──────────────────────────────────────────────────────────
+
+def test_step_development_merges_development_key(monkeypatch):
+    """step_development must add 'development' key and leave other keys untouched."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_development_config", lambda: {
+        "pre_commit": True,
+    })
+
+    result = step_development({"existing": "value"})
+    assert result["existing"] == "value"
+    assert result["development"]["pre_commit"] is True
+
+
+def test_step_development_pre_commit_false(monkeypatch):
+    """step_development with pre_commit=False must set development.pre_commit=False."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_development_config", lambda: {
+        "pre_commit": False,
+    })
+
+    result = step_development({})
+    assert result["development"]["pre_commit"] is False
+
+
+def test_step_development_does_not_mutate_input(monkeypatch):
+    """step_development must not mutate the incoming partial dict."""
+    monkeypatch.setattr(f"{_WIZARD}.ask_development_config", lambda: {
+        "pre_commit": True,
+    })
+
+    initial = {"metadata": {"name": "x"}}
+    step_development(initial)
+    assert "development" not in initial
+
+
 # ── step_ci ───────────────────────────────────────────────────────────────────
 
 def test_step_ci_merges_ci_key(monkeypatch):
@@ -423,6 +458,7 @@ def test_wizard_all_defaults_produces_valid_config(monkeypatch):
     Baseline test: composing all steps with their default responses must produce
     a valid ProjectConfig without raising a Pydantic ValidationError.
     This simulates a user pressing Enter through every prompt.
+    development defaults to pre_commit=False so no pre-commit file is generated.
     ci defaults to provider=none so the CI file is NOT generated.
     """
     import questionary as q
@@ -474,6 +510,10 @@ def test_wizard_all_defaults_produces_valid_config(monkeypatch):
         "enable_ip_pseudonymization": False,
     })
 
+    monkeypatch.setattr(f"{_WIZARD}.ask_development_config", lambda: {
+        "pre_commit": False,
+    })
+
     monkeypatch.setattr(f"{_WIZARD}.ask_ci_config", lambda: {
         "provider": "none",
         "python_version": "3.12",
@@ -488,6 +528,7 @@ def test_wizard_all_defaults_produces_valid_config(monkeypatch):
     partial = step_api(partial)
     partial = step_observability(partial)
     partial = step_security(partial)
+    partial = step_development(partial)
     partial = step_ci(partial)
 
     config = build_config(partial)
@@ -501,6 +542,8 @@ def test_wizard_all_defaults_produces_valid_config(monkeypatch):
     assert config.api.title == "My Agentic API"
     assert config.observability.enable_tracing is False
     assert config.security.enable_auth is False
+    # Development defaults to pre_commit=False — the opt-in is off
+    assert config.development.pre_commit is False
     # CI defaults to none — the opt-in is off
     assert config.ci.provider == "none"
 
@@ -580,6 +623,9 @@ def test_build_config_with_mysql_and_alembic():
             "enable_auth": False,
             "api_key_env_var": "API_KEY",
             "enable_ip_pseudonymization": False,
+        },
+        "development": {
+            "pre_commit": False,
         },
     }
 

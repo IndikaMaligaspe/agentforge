@@ -279,6 +279,8 @@ class TemplateRenderer:
         data["ci_provider"]                 = config.ci.provider
         data["ci_python_version"]           = config.ci.python_version
         data["ci_installer"]                = config.ci.installer
+        # Development tooling aliases
+        data["dev_pre_commit"]              = config.development.pre_commit
         # Top-level feature flags
         data["enable_provider_registry"]    = config.enable_provider_registry
         return data
@@ -343,4 +345,7 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
     # ── GitHub Actions CI scaffold ────────────────────────────────────────────
     ("ci/github_ci.yml.j2",          ".github/workflows/ci.yml",
      lambda c: c.ci.provider == "github"),
+    # ── Pre-commit hooks scaffold ─────────────────────────────────────────────
+    ("precommit_config.yaml.j2",     ".pre-commit-config.yaml",
+     lambda c: c.development.pre_commit),
 ]
