@@ -1,0 +1,170 @@
+# examples/workflow.yaml — Human-in-the-loop campaign approval workflow.
+#
+# Pattern exercised: workflow (deterministic state machine, 4 sequential steps, HITL)
+# Real-world use case: A campaign launch approval workflow that collects campaign inputs
+#   from the requester, validates them against platform policy, pauses for human review
+#   and sign-off before finalising and submitting the campaign to the ad platform API.
+#
+# Opt-in features demonstrated:
+#   - pattern: workflow                         (deterministic step-by-step state machine)
+#   - workflow_sm.steps: 4 ordered steps        (collect_inputs → validate_inputs →
+#                                                human_review → finalize)
+#   - workflow_sm.hitl_before: ["human_review"] (LangGraph interrupt before human_review step)
+#   - database.backend: postgres                (required by checkpointing)
+#   - workflow.enable_checkpointing: true       (AsyncPostgresSaver persists state across HITL pause)
+#   - database.use_alembic: true               (migration scaffold for workflow state tables)
+
+metadata:
+  name: campaign_approval
+  description: >
+    Human-in-the-loop campaign launch approval workflow. Collects campaign configuration
+    inputs, validates them against ad platform policy rules, pauses for a human reviewer
+    to approve or reject, then finalises and submits approved campaigns. LangGraph
+    checkpointing persists state across the HITL pause so reviews can happen asynchronously.
+    Demonstrates the workflow pattern with 4 sequential steps and a human interrupt.
+  python_version: "3.12"
+  author: AgentForge Example
+  email: example@agentforge.dev
+
+entry:
+  type: direct
+
+pattern: workflow
+
+workflow_sm:
+  steps:
+    - key: collect_inputs
+      description: >
+        Gather and normalise campaign configuration from the requester: name, objective,
+        budget, schedule, audience targeting, and creative asset references. Validate
+        that all required fields are present before proceeding.
+    - key: validate_inputs
+      description: >
+        Run automated policy validation on the collected inputs. Check budget limits,
+        audience targeting compliance, creative asset approval status, and schedule
+        conflicts with platform blackout dates. Surface validation errors as structured
+        feedback so the requester can correct them without human review involvement.
+    - key: human_review
+      description: >
+        Present the validated campaign configuration to a human reviewer. The workflow
+        pauses here (LangGraph interrupt_before) until the reviewer approves or rejects.
+        Approved campaigns proceed to finalise; rejected campaigns return structured
+        rejection reasons to the requester.
+    - key: finalize
+      description: >
+        Submit the approved campaign configuration to the ad platform API, record the
+        submission receipt, update internal campaign tracking, and notify stakeholders.
+        On submission failure, log the error and return a structured error response for
+        retry handling.
+  hitl_before:
+    - human_review
+
+agents:
+  - key: campaign_ops
+    class_name: CampaignOpsAgent
+    llm_model: gpt-4o-mini
+    system_prompt: |
+      You are a campaign operations assistant embedded in the campaign approval workflow.
+      You assist at multiple workflow steps:
+
+      At collect_inputs: Extract and structure campaign configuration from free-text or
+      partial JSON requests. Infer missing optional fields from context where safe to do so.
+      Flag required fields that are truly missing and cannot be inferred.
+
+      At validate_inputs: Apply ad platform policy rules to the collected configuration.
+      Check: daily budget >= $5 minimum, end date > start date, audience size > 1000,
+      creative assets are approved (check via verify_creative_approval tool), and the
+      campaign objective matches supported platform objectives.
+
+      At finalize: Summarise the approved campaign for the submission receipt and prepare
+      the stakeholder notification message.
+
+      Always return structured responses. Never invent campaign settings — flag ambiguity.
+    tools:
+      - kind: mcp
+        name: verify_creative_approval
+        description: Check whether a creative asset has passed ad platform review
+        mcp_resource: verify_creative_approval
+      - kind: mcp
+        name: check_schedule_conflicts
+        description: >
+          Check whether the proposed campaign schedule conflicts with platform blackout
+          dates or other active campaigns in the same account.
+        mcp_resource: check_schedule_conflicts
+      - kind: http
+        name: submit_campaign
+        description: Submit an approved campaign configuration to the ad platform API
+        url: https://example.com/api/v1/campaigns/submit
+        method: POST
+        auth_env_var: AD_PLATFORM_API_KEY
+        timeout_s: 30.0
+    needs_validation: false
+    extra_return_keys: ["campaign_id", "validation_errors", "submission_receipt", "step_output"]
+
+database:
+  backend: postgres
+  tables:
+    - campaign_requests
+    - validation_results
+    - approval_decisions
+    - submission_receipts
+    - workflow_state
+  connection_env_var: DATABASE_URL
+  pool_size: 10
+  max_overflow: 20
+  use_alembic: true
+
+workflow:
+  enable_feedback_loop: false
+  enable_validation_node: false
+  router_llm_model: gpt-4o-mini
+  router_llm_provider: openai
+  default_intent: campaign_ops
+  max_feedback_attempts: 1
+  enable_checkpointing: true
+
+api:
+  title: Campaign Approval API
+  query_max_length: 4000
+  endpoints:
+    - /submit
+    - /review
+    - /status
+  cors:
+    origins:
+      - "https://app.example.com"
+    allow_credentials: true
+
+observability:
+  enable_tracing: true
+  tracing_provider: langfuse
+  context_fields:
+    - request_id
+    - campaign_request_id
+    - reviewer_id
+    - session_id
+  log_rotation_bytes: 10485760
+  log_backup_count: 10
+  structured_logging: false
+
+security:
+  auth_type: jwt
+  jwt_algorithm: RS256
+  jwks_url: https://example.com/.well-known/jwks.json
+  jwt_issuer: https://example.com
+  jwt_audience: campaign-approval-api
+  enable_ip_pseudonymization: true
+
+ci:
+  provider: github
+  python_version: "3.12"
+  installer: uv
+
+development:
+  pre_commit: true
+
+testing:
+  eval_framework: none
+  enable_benchmarks: false
+
+enable_provider_registry: false

@@ -1,0 +1,98 @@
+"""
+Query Router Node for the LangGraph workflow.
+
+This module contains the query_router_node function that classifies
+queries as 'data', 'analytics' and routes them accordingly.
+"""
+
+from langchain_openai import ChatOpenAI
+from ..state import AgentState
+from observability.logging import get_logger, log_with_props, log_execution_time, RequestContext
+
+# Initialize logger
+logger = get_logger(__name__)
+
+def query_router_node(state: AgentState) -> AgentState:
+    """
+    Classify the user query as 'data', 'analytics'.
+    Uses a fast LLM call with a structured prompt.
+    Falls back to 'data' on any error.
+    
+    Args:
+        state: The current workflow state
+        
+    Returns:
+        Updated state with intent classification
+    """
+    node_name = "query_router_node"
+    request_id = RequestContext.get_request_id()
+    
+    # Log node entry
+    log_with_props(logger, "info", f"Entering {node_name}",
+                  node=node_name,
+                  request_id=request_id,
+                  query_length=len(state['query']) if 'query' in state else 0)
+    
+    try:
+        # Initialize a fast LLM for classification
+        llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
+        
+        # Build the classification prompt
+        ROUTER_PROMPT = """Classify the user's question as one of: data, analytics.
+
+Return ONLY one word from the list above.
+
+Question: {query}"""
+        
+        formatted_prompt = ROUTER_PROMPT.format(query=state['query'])
+        
+        # Measure execution time
+        with log_execution_time(logger, f"{node_name}_llm_invoke"):
+            response = llm.invoke(formatted_prompt)
+        
+        # Parse the response - extract just the classification word
+        intent = response.content.strip().lower()
+        
+        # Validate and sanitize the response
+        valid_intents = ["data", "analytics"]
+        if intent not in valid_intents:
+            log_with_props(logger, "warning", f"Invalid classification response: {intent}. Defaulting to 'data'",
+                          node=node_name,
+                          request_id=request_id,
+                          raw_response=response.content)
+            intent = "data"  # Default on any parse error
+        
+        # Log the classification result
+        log_with_props(logger, "info", f"Query classified as '{intent}'",
+                      node=node_name,
+                      request_id=request_id,
+                      intent=intent,
+                      query_preview=state['query'][:100] + "..." if len(state['query']) > 100 else state['query'])
+        
+        # Update the state with the intent
+        updated_state = {
+            **state,
+            'intent': intent
+        }
+        
+        # Log node exit
+        log_with_props(logger, "info", f"Exiting {node_name}",
+                      node=node_name,
+                      request_id=request_id,
+                      intent=intent)
+        
+        return updated_state
+        
+    except Exception as e:
+        # Log any exceptions
+        log_with_props(logger, "error", f"Error in {node_name}",
+                      node=node_name,
+                      request_id=request_id,
+                      error=str(e),
+                      exc_info=True)
+        
+        # Default to 'data' on any error
+        return {
+            **state,
+            'intent': 'data'  # Default on any error
+        }

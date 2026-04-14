@@ -1,0 +1,107 @@
+"""HTTP tool client for {{ project_name }}.
+
+Each HTTP tool declared in project.yaml is exposed as an async callable that
+issues an HTTP request using ``httpx.AsyncClient``.
+
+Authentication is read at call time from the environment variable named in
+``auth_env_var`` (per tool).  A clear ``RuntimeError`` is raised if the variable
+is required but absent.
+
+.. note::
+    OpenAPI ingestion is deferred.  Currently all HTTP tools are called with
+    the declared ``method`` and a JSON body passed directly by the caller.
+    # TODO: add OpenAPI schema ingestion to auto-build request/response types.
+"""
+from __future__ import annotations
+
+import os
+from typing import Any
+
+import httpx
+
+from backend.observability.logging import get_logger
+
+logger = get_logger("http_tool")
+
+
+def _get_bearer_token(auth_env_var: str | None, tool_name: str) -> str | None:
+    """Read the bearer token from the environment.
+
+    Args:
+        auth_env_var: Name of the env var, or ``None`` when auth is not required.
+        tool_name: Tool name used in the error message.
+
+    Returns:
+        The raw token string, or ``None`` when ``auth_env_var`` is ``None``.
+
+    Raises:
+        RuntimeError: If ``auth_env_var`` is set but the variable is absent or empty.
+    """
+    if auth_env_var is None:
+        return None
+    token = os.environ.get(auth_env_var, "")
+    if not token:
+        raise RuntimeError(
+            f"HTTP tool '{tool_name}' requires authentication but env var "
+            f"'{auth_env_var}' is not set or is empty.  "
+            f"Set the variable before starting the server."
+        )
+    return token
+
+
+{% for tool in http_tools %}
+async def {{ tool.name }}(**kwargs: Any) -> Any:
+    """Call {{ tool.url }} ({{ tool.method }}) — {{ tool.description }}
+
+    All keyword arguments are forwarded as the request body (JSON for
+    non-GET methods) or query parameters (for GET).
+
+    Raises:
+        RuntimeError: If auth_env_var is set but the token env var is absent.
+        httpx.HTTPStatusError: If the server returns a 4xx or 5xx status.
+        httpx.RequestError: On network-level failures.
+    """
+    token = _get_bearer_token({{ tool.auth_env_var | tojson }}, {{ tool.name | tojson }})
+
+    headers: dict[str, str] = {}
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
+
+    url = {{ tool.url | tojson }}
+    method = {{ tool.method | tojson }}
+    timeout = {{ tool.timeout_s }}
+
+    logger.debug("Calling HTTP tool '%s': %s %s", {{ tool.name | tojson }}, method, url)
+
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            if method == "GET":
+                response = await client.request(method, url, params=kwargs, headers=headers)
+            else:
+                response = await client.request(method, url, json=kwargs, headers=headers)
+            response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "HTTP tool '%s' received error status %d from %s",
+            {{ tool.name | tojson }},
+            exc.response.status_code,
+            url,
+        )
+        raise httpx.HTTPStatusError(
+            f"HTTP tool '{{ tool.name }}' call to {url} failed with status "
+            f"{exc.response.status_code}: {exc.response.text}",
+            request=exc.request,
+            response=exc.response,
+        ) from exc
+    except httpx.RequestError as exc:
+        logger.error("HTTP tool '%s' request error: %s", {{ tool.name | tojson }}, exc)
+        raise httpx.RequestError(
+            f"HTTP tool '{{ tool.name }}' network error calling {url}: {exc}"
+        ) from exc
+
+    try:
+        return response.json()
+    except Exception:
+        return response.text
+
+{% endfor %}

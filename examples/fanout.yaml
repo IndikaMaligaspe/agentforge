@@ -1,0 +1,178 @@
+# examples/fanout.yaml — Parallel ad creative analysis fan-out.
+#
+# Pattern exercised: fanout (3 parallel agents, merge_dict reducer, custom results_field)
+# Real-world use case: A creative performance analysis pipeline that evaluates ad
+#   creatives in parallel across three specialised lenses — budget efficiency,
+#   audience targeting quality, and creative execution quality — then merges the
+#   per-lens results into a unified creative scorecard dict.
+#
+# Opt-in features demonstrated:
+#   - pattern: fanout                       (parallel agent execution)
+#   - fanout.reducer: merge_dict            (results merged by agent key into a dict)
+#   - fanout.results_field: analysis_scores (non-default field name)
+#   - 3 parallel specialist agents: budget_analyzer, audience_analyzer, creative_analyzer
+#   - MCP tools (internal scoring models via MCP server)
+#   - HTTP tool (third-party creative intelligence API)
+
+metadata:
+  name: creative_analysis
+  description: >
+    Parallel ad creative analysis pipeline. Evaluates a creative asset simultaneously
+    from three independent lenses: budget efficiency (ROAS, CPM), audience targeting
+    quality (relevance score, frequency), and creative execution (attention score,
+    CTR, brand safety). Results are merged into a unified scorecard dict keyed by
+    agent. Demonstrates the fanout pattern with merge_dict reducer and a custom
+    results_field name.
+  python_version: "3.12"
+  author: AgentForge Example
+  email: example@agentforge.dev
+
+entry:
+  type: direct
+
+pattern: fanout
+
+fanout:
+  reducer: merge_dict
+  results_field: analysis_scores
+
+agents:
+  - key: budget_analyzer
+    class_name: BudgetAnalyzerAgent
+    llm_model: gpt-4o-mini
+    system_prompt: |
+      You are a budget efficiency analyst specialising in paid digital advertising.
+      You receive a creative asset ID and the associated campaign spend data. Your job
+      is to score this creative's budget efficiency on a 0–100 scale by evaluating:
+        - ROAS contribution: how much revenue this creative drove per dollar spent
+        - CPM efficiency: cost-per-thousand-impressions vs. account benchmark
+        - Spend pacing: whether budget was distributed efficiently across the flight
+
+      Return a structured result:
+        budget_score (int 0-100), roas_contribution (float), cpm_vs_benchmark (float),
+        spend_pacing_grade (A/B/C/D), and a one-sentence efficiency verdict.
+    tools:
+      - kind: mcp
+        name: get_spend_breakdown
+        description: Retrieve spend, ROAS, and CPM data for a creative asset over a date range
+        mcp_resource: get_spend_breakdown
+      - kind: mcp
+        name: get_account_cpm_benchmark
+        description: Get the account-level CPM benchmark for normalising creative CPM scores
+        mcp_resource: get_account_cpm_benchmark
+    needs_validation: false
+    extra_return_keys: ["budget_score", "roas_contribution", "cpm_vs_benchmark", "spend_pacing_grade"]
+
+  - key: audience_analyzer
+    class_name: AudienceAnalyzerAgent
+    llm_model: gpt-4o-mini
+    system_prompt: |
+      You are an audience targeting quality analyst for digital advertising campaigns.
+      You receive a creative asset ID and evaluate audience-creative fit by examining:
+        - Relevance score: how well the creative messaging matches the targeted audience
+        - Frequency management: whether ad frequency is in the 1.5–5.0 optimal range
+        - Audience overlap: percentage of the audience also served competing creatives
+
+      Return a structured result:
+        audience_score (int 0-100), relevance_score (float 0-10), avg_frequency (float),
+        overlap_pct (float), and a one-sentence targeting verdict.
+    tools:
+      - kind: mcp
+        name: get_audience_metrics
+        description: Retrieve relevance score, frequency, and audience overlap for a creative
+        mcp_resource: get_audience_metrics
+    needs_validation: false
+    extra_return_keys: ["audience_score", "relevance_score", "avg_frequency", "overlap_pct"]
+
+  - key: creative_analyzer
+    class_name: CreativeAnalyzerAgent
+    llm_model: gpt-4o-mini
+    system_prompt: |
+      You are a creative quality analyst for digital advertising. You evaluate the
+      execution quality of ad creative assets by examining:
+        - Attention score: predicted visual attention using the creative intelligence API
+        - CTR performance: click-through rate vs. account creative benchmark
+        - Brand safety: whether the creative passes platform brand safety guidelines
+        - Creative fatigue: whether CTR has declined > 20% over the past 7 days
+
+      Return a structured result:
+        creative_score (int 0-100), attention_score (float 0-100), ctr_vs_benchmark (float),
+        brand_safe (bool), fatigued (bool), and a one-sentence creative verdict.
+    tools:
+      - kind: mcp
+        name: get_creative_performance
+        description: Retrieve CTR, fatigue signal, and brand safety status for a creative asset
+        mcp_resource: get_creative_performance
+      - kind: http
+        name: get_attention_score
+        description: >
+          Call the third-party creative intelligence API to get a predicted attention score
+          for a creative asset based on its visual composition and copy.
+        url: https://example.com/api/v1/creative-intelligence/attention
+        method: POST
+        auth_env_var: CREATIVE_INTELLIGENCE_API_KEY
+        timeout_s: 10.0
+    needs_validation: false
+    extra_return_keys: ["creative_score", "attention_score", "ctr_vs_benchmark", "brand_safe", "fatigued"]
+
+database:
+  backend: postgres
+  tables:
+    - creative_assets
+    - analysis_runs
+    - analysis_scores
+  connection_env_var: DATABASE_URL
+  pool_size: 5
+  max_overflow: 10
+  use_alembic: false
+
+workflow:
+  enable_feedback_loop: false
+  enable_validation_node: false
+  router_llm_model: gpt-4o-mini
+  router_llm_provider: openai
+  default_intent: budget_analyzer
+  max_feedback_attempts: 1
+  enable_checkpointing: false
+
+api:
+  title: Creative Analysis API
+  query_max_length: 2000
+  endpoints:
+    - /analyze
+    - /scorecard
+  cors:
+    origins:
+      - "https://app.example.com"
+    allow_credentials: false
+
+observability:
+  enable_tracing: true
+  tracing_provider: langfuse
+  context_fields:
+    - request_id
+    - creative_id
+    - account_id
+    - session_id
+  log_rotation_bytes: 10485760
+  log_backup_count: 5
+  structured_logging: false
+
+security:
+  auth_type: api_key
+  api_key_env_var: CREATIVE_ANALYSIS_API_KEY
+  enable_ip_pseudonymization: false
+
+ci:
+  provider: github
+  python_version: "3.12"
+  installer: uv
+
+development:
+  pre_commit: false
+
+testing:
+  eval_framework: none
+  enable_benchmarks: false
+
+enable_provider_registry: false

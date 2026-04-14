@@ -1,0 +1,137 @@
+"""Agent tool client for {{ project_name }}.
+
+Each AgentTool declared in project.yaml is exposed as an async callable that
+forwards requests to another AgentForge-generated service using JWT-authenticated
+HTTP (via httpx).
+
+.. note::
+    This module is a CLIENT for calling other AgentForge services over HTTP.
+    It does NOT verify JWTs — it reads a pre-minted token from ``auth_env_var``
+    and attaches it as a ``Bearer`` header. The authoritative JWT verifier lives
+    in ``backend.security.jwt`` and is used by the receiving server. Do NOT
+    reimplement token minting or verification here.
+"""
+from __future__ import annotations
+
+import os
+from typing import Any
+
+import httpx
+
+from backend.observability.logging import get_logger
+
+logger = get_logger("agent_tool")
+
+
+def _get_agent_token(auth_env_var: str | None, tool_name: str) -> str | None:
+    """Read the JWT bearer token from the environment.
+
+    Args:
+        auth_env_var: Name of the env var holding the pre-minted JWT, or
+            ``None`` when the downstream service is open.
+        tool_name: Tool name used in the error message.
+
+    Returns:
+        The raw JWT string, or ``None`` when auth is not required.
+
+    Raises:
+        RuntimeError: If ``auth_env_var`` is set but the variable is absent or empty.
+    """
+    if auth_env_var is None:
+        return None
+    token = os.environ.get(auth_env_var, "")
+    if not token:
+        raise RuntimeError(
+            f"Agent tool '{tool_name}' requires a JWT but env var "
+            f"'{auth_env_var}' is not set or is empty.  "
+            f"Set the variable before starting the server."
+        )
+    return token
+
+
+def _handle_auth_error(status_code: int, tool_name: str, url: str) -> None:
+    """Raise a clear error for 401/403 responses from downstream services."""
+    if status_code == 401:
+        raise PermissionError(
+            f"Agent tool '{tool_name}' received 401 Unauthorized from {url}.  "
+            f"Check that the JWT token in the configured env var is valid and not expired."
+        )
+    if status_code == 403:
+        raise PermissionError(
+            f"Agent tool '{tool_name}' received 403 Forbidden from {url}.  "
+            f"The token does not have sufficient permissions for this operation."
+        )
+
+
+{% for tool in agent_tools %}
+async def {{ tool.name }}(**kwargs: Any) -> Any:
+    """Forward a request to AgentForge service at {{ tool.service_url }} — {{ tool.description }}
+
+    Attaches a JWT bearer token from the environment variable named in
+    ``auth_env_var`` (if configured).  The token is NOT generated here —
+    supply a pre-minted token in the env var.
+
+    Args:
+        **kwargs: Forwarded as a JSON body to the downstream service.
+
+    Returns:
+        Parsed JSON response body, or raw text if the body is not JSON.
+
+    Raises:
+        RuntimeError: If the auth env var is set but missing/empty.
+        PermissionError: On 401 or 403 responses from the downstream service.
+        httpx.HTTPStatusError: On other 4xx/5xx responses.
+        httpx.RequestError: On network-level failures.
+    """
+    token = _get_agent_token({{ tool.auth_env_var | tojson }}, {{ tool.name | tojson }})
+
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if token is not None:
+        headers["Authorization"] = f"Bearer {token}"
+
+    service_url = {{ tool.service_url | tojson }}
+    agent_key = {{ tool.agent_key | tojson }}
+    url = f"{service_url.rstrip('/')}/query"
+
+    payload = {"intent": agent_key, "inputs": kwargs}
+
+    logger.debug(
+        "Calling agent tool '%s' at %s (agent_key=%s)",
+        {{ tool.name | tojson }},
+        url,
+        agent_key,
+    )
+
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            response = await client.post(url, json=payload, headers=headers)
+    except httpx.RequestError as exc:
+        logger.error("Agent tool '%s' network error: %s", {{ tool.name | tojson }}, exc)
+        raise httpx.RequestError(
+            f"Agent tool '{{ tool.name }}' network error calling {url}: {exc}"
+        ) from exc
+
+    _handle_auth_error(response.status_code, {{ tool.name | tojson }}, url)
+
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as exc:
+        logger.error(
+            "Agent tool '%s' received error status %d from %s",
+            {{ tool.name | tojson }},
+            exc.response.status_code,
+            url,
+        )
+        raise httpx.HTTPStatusError(
+            f"Agent tool '{{ tool.name }}' call to {url} failed with status "
+            f"{exc.response.status_code}: {exc.response.text}",
+            request=exc.request,
+            response=exc.response,
+        ) from exc
+
+    try:
+        return response.json()
+    except Exception:
+        return response.text
+
+{% endfor %}

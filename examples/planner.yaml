@@ -1,0 +1,154 @@
+# examples/planner.yaml — Multi-step research planner.
+#
+# Pattern exercised: planner (decompose → plan → solve → validate → compose)
+# Real-world use case: An automated competitive-intelligence research assistant that
+#   receives a research brief, decomposes it into a dependency DAG of sub-tasks,
+#   executes sub-tasks concurrently, validates coverage against the original brief,
+#   and composes a structured research report. Replans automatically if coverage
+#   gaps are detected (max 2 replans).
+#
+# Opt-in features demonstrated:
+#   - pattern: planner                  (full planner loop: decompose→solve→validate→compose)
+#   - planner.precheck_enabled: true    (PlanPrecheckNode — structural DAG validation)
+#   - planner.validator_enabled: true   (ValidatorNode — LLM coverage check post-solve)
+#   - planner.composer_enabled: true    (ComposerNode — stitches results into final report)
+#   - planner.max_replans: 2            (replan up to 2 times on coverage failure)
+#   - MCP tool (internal knowledge base search)
+#   - HTTP tool (external web search API)
+#   - agent tool (delegates to a specialist summariser service)
+
+metadata:
+  name: research_planner
+  description: >
+    Automated competitive-intelligence research assistant. Accepts a free-text research
+    brief, decomposes it into a parallel execution plan, solves sub-tasks concurrently,
+    validates coverage with an LLM judge, and composes a structured report. Replans
+    automatically on coverage failures (max 2 attempts). Demonstrates the full planner
+    loop with all three optional nodes (precheck, validator, composer) enabled.
+  python_version: "3.12"
+  author: AgentForge Example
+  email: example@agentforge.dev
+
+entry:
+  type: passthrough
+
+pattern: planner
+
+planner:
+  max_replans: 2
+  max_concurrency: 4
+  precheck_enabled: true
+  validator_enabled: true
+  composer_enabled: true
+  llm_model: gpt-4o
+  llm_temperature: 0.0
+
+agents:
+  - key: researcher
+    class_name: ResearcherAgent
+    llm_model: gpt-4o-mini
+    system_prompt: |
+      You are a precision research specialist. You receive a single research sub-task
+      from the planner and execute it thoroughly using the tools available:
+
+        1. knowledge_base_search — search internal documents and prior research reports
+           for relevant context, precedents, and existing analysis.
+        2. web_search — retrieve up-to-date external information for sub-tasks that
+           require current market data, news, or competitor intelligence.
+        3. summarise_source — delegate a lengthy source document to the specialist
+           summariser service to extract key points efficiently.
+
+      Return a structured finding with: sub_task_id, sources_consulted, key_facts (list),
+      confidence_score (0.0–1.0), and a brief synthesis paragraph. If you cannot find
+      reliable information, say so explicitly — do not hallucinate facts.
+    tools:
+      - kind: mcp
+        name: knowledge_base_search
+        description: Full-text search across internal research documents and prior reports
+        mcp_resource: knowledge_base_search
+      - kind: http
+        name: web_search
+        description: >
+          Search the web for current competitive intelligence, market data, and news.
+          Returns a ranked list of results with titles, URLs, and snippets.
+        url: https://example.com/api/v1/search
+        method: POST
+        auth_env_var: SEARCH_API_KEY
+        timeout_s: 20.0
+      - kind: agent
+        name: summarise_source
+        description: >
+          Delegate a long-form document or URL to the specialist summariser service.
+          Returns a structured summary with key points, entities, and sentiment.
+        service_url: https://example.com/summariser/
+        # agent_key refers to the target agent in the remote summariser service,
+        # not the local 'researcher' agent defined in this file.
+        agent_key: summariser
+        auth_env_var: SUMMARISER_SERVICE_JWT
+    needs_validation: false
+    extra_return_keys: ["sub_task_id", "key_facts", "confidence_score", "sources_consulted"]
+
+database:
+  backend: postgres
+  tables:
+    - research_sessions
+    - plan_steps
+    - research_findings
+    - composed_reports
+  connection_env_var: DATABASE_URL
+  pool_size: 5
+  max_overflow: 10
+  use_alembic: true
+
+workflow:
+  enable_feedback_loop: false
+  enable_validation_node: false
+  router_llm_model: gpt-4o-mini
+  router_llm_provider: openai
+  default_intent: researcher
+  max_feedback_attempts: 1
+  enable_checkpointing: false
+
+api:
+  title: Research Planner API
+  query_max_length: 5000
+  endpoints:
+    - /research
+    - /plan-status
+    - /report
+  cors:
+    origins:
+      - "https://app.example.com"
+      - "http://localhost:3000"
+    allow_credentials: false
+
+observability:
+  enable_tracing: true
+  tracing_provider: langfuse
+  context_fields:
+    - request_id
+    - session_id
+    - plan_id
+    - user_id
+  log_rotation_bytes: 10485760
+  log_backup_count: 5
+  structured_logging: false
+
+security:
+  auth_type: api_key
+  api_key_env_var: RESEARCH_API_KEY
+  enable_ip_pseudonymization: false
+
+ci:
+  provider: github
+  python_version: "3.12"
+  installer: uv
+
+development:
+  pre_commit: true
+
+testing:
+  eval_framework: deepeval
+  enable_benchmarks: true
+
+enable_provider_registry: false

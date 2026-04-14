@@ -7,7 +7,8 @@ python-dotenv>=1.0.0
 # LangChain and LangGraph
 langchain>=0.1.0
 langchain-core>=0.1.0
-langgraph>=0.0.20
+langgraph>=0.2
+langchain-openai>=0.1.0
 
 # LLM providers
 openai>=1.12.0
@@ -63,6 +64,11 @@ pyjwt[crypto]>=2.9.0,<3.0.0
 
 # MCP client — pinned to <0.2.0; see backend/services/mcp_client.py for upgrade notes
 langchain-mcp-adapters>=0.1.0,<0.2.0
+{% endif %}
+{% if has_http_tool or has_agent_tool %}
+
+# HTTP client — required by http_tool and/or agent_tool service modules
+httpx>=0.26.0
 {% endif %}
 
 # Development tools

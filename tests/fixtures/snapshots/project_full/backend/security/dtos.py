@@ -1,0 +1,25 @@
+"""Authentication data transfer objects."""
+from typing import Any
+
+from pydantic import BaseModel
+
+
+class AuthError(Exception):
+    """Raised when JWT verification fails."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
+
+
+class TokenClaims(BaseModel):
+    """Validated JWT claims returned by verify_token."""
+
+    sub: str | None = None
+    iss: str | None = None
+    aud: str | list[str] | None = None
+    exp: int | None = None
+    iat: int | None = None
+    extra: dict[str, Any] = {}
+
+    model_config = {"extra": "allow"}

@@ -1,0 +1,89 @@
+import typing
+
+import pytest
+from deepeval.dataset import EvaluationDataset, Golden
+
+from .generators import BaseBenchmarksTestGenerator
+
+
+class BenchmarksRunner:
+    """
+    Runner for executing benchmark tests in batches.
+
+    This class handles the creation of test batches from a dataset and
+    generates dynamically parametrized pytest functions to run them.
+    """
+
+    def __init__(
+        self,
+        batch_size: int,
+        dataset: EvaluationDataset,
+        tests_generator: BaseBenchmarksTestGenerator,
+    ):
+        """
+        Initialize the BenchmarksRunner.
+
+        Args:
+            batch_size (int): The number of test cases to include in each batch.
+            dataset (EvaluationDataset): The dataset containing the golden test cases.
+            tests_generator (BaseBenchmarksTestGenerator): The generator used to run the benchmark tests.
+        """
+        self.batch_size = batch_size
+        self.dataset = dataset
+        self.tests_generator = tests_generator
+
+    def create_batches(self, test_cases: list[Golden], batch_size: int) -> list[list[Golden]]:
+        """
+        Split test cases into batches of specified size.
+
+        Args:
+            test_cases (list[Golden]): The list of test cases to split.
+            batch_size (int): The maximum size of each batch.
+
+        Returns:
+            list[list[Golden]]: A list of batches, where each batch is a list of test cases.
+        """
+        batches = []
+        for i in range(0, len(test_cases), batch_size):
+            batches.append(test_cases[i : i + batch_size])
+        return batches
+
+    def __init_test(
+        self, batch_index: int, batch_cases: typing.Iterable[Golden]
+    ) -> typing.Callable:
+        """
+        Initialize a single pytest test function for a batch of cases.
+
+        Args:
+            batch_index (int): The index of the batch (used for naming).
+            batch_cases (typing.Iterable[Golden]): The test cases in this batch.
+
+        Returns:
+            typing.Callable: A pytest test function configured for the batch.
+        """
+
+        @pytest.mark.asyncio
+        @pytest.mark.parametrize(
+            "golden",
+            batch_cases,
+            ids=[g.input for g in batch_cases],
+        )
+        async def test_function(golden: Golden):
+            await self.tests_generator.benchmark_test(golden)
+
+        test_function.__name__ = f"test_agent_batch{batch_index + 1}"
+        return test_function
+
+    def init_tests(self) -> list[typing.Callable]:
+        """
+        Initialize all test functions for the dataset.
+
+        Returns:
+            list[typing.Callable]: A list of generated test functions ready for pytest collection.
+        """
+        batches = self.create_batches(self.dataset.goldens, self.batch_size)
+
+        test_functions = []
+        for idx, batch in enumerate(batches):
+            test_functions.append(self.__init_test(idx, batch))
+        return test_functions
