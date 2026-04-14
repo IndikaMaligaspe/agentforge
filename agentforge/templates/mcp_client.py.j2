@@ -11,6 +11,10 @@ which must be a JSON object mapping server names to connection configs::
 
 An optional ``MCP_TIMEOUT`` environment variable sets the default timeout (seconds)
 when a per-server ``timeout`` key is absent. Defaults to 30 seconds.
+
+This module is called by ``backend.services.tool_registry`` which aggregates MCP
+callables together with HTTP and agent tool callables into a single registry dict.
+See ``backend/services/tool_registry.py`` for the entry point used by all nodes.
 """
 from __future__ import annotations
 

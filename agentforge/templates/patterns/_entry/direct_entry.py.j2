@@ -1,0 +1,43 @@
+{# patterns/_entry/direct_entry.py.j2
+   Direct entry request model: typed inputs supplied by the caller with no LLM
+   parsing.  Imported in main.py when entry.type == "direct".
+
+   Context vars used:
+     query_max_length     — int  (reused as a soft cap for any string fields)
+     valid_intents        — list[str]  (agent keys — used in the field description)
+#}
+"""
+Direct Entry request model for the ``direct`` entry type.
+
+When ``entry.type: direct`` is set, the API caller supplies both
+``intent`` and ``inputs`` explicitly.  No LLM call is made at the
+entry layer; the graph is invoked with state already populated from
+the request body.
+
+Valid intents for this project: {% for intent in valid_intents %}{{ intent }}{% if not loop.last %}, {% endif %}{% endfor %}
+"""
+from pydantic import BaseModel, Field
+from typing import Any
+
+
+class DirectEntryRequest(BaseModel):
+    """
+    Typed request body for the ``direct`` entry type.
+
+    The caller must supply:
+    - ``intent``: one of the registered agent keys ({% for intent in valid_intents %}``{{ intent }}``{% if not loop.last %}, {% endif %}{% endfor %})
+    - ``inputs``: a structured dict of parameters passed directly to the agent
+    """
+    intent: str = Field(
+        ...,
+        min_length=1,
+        max_length={{ query_max_length }},
+        description=(
+            "Agent routing key. Must be one of: "
+            "{% for intent in valid_intents %}{{ intent }}{% if not loop.last %}, {% endif %}{% endfor %}"
+        ),
+    )
+    inputs: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Structured parameters forwarded directly to the selected agent.",
+    )

@@ -1,0 +1,90 @@
+"""
+Validation node for the agent workflow graph.
+
+This node validates agent responses before they are returned to the user,
+ensuring they meet safety and quality standards.
+"""
+from typing import Literal
+
+from ...agents.registry import AgentRegistry
+from ..state import AgentState
+
+
+async def validation_node(state: AgentState) -> AgentState:
+    """
+    Validate agent responses for safety and quality.
+    
+    This node is triggered for agents that require validation (e.g., SQL agents).
+    It checks the agent's response against safety rules and quality standards
+    before allowing it to be returned to the user.
+    
+    Args:
+        state: The current workflow state
+        
+    Returns:
+        Updated state with validated field set to True or False
+    """
+    # Extract relevant information from state
+    agent_response = state.get("agent_response", "")
+    intent = state.get("intent", "data")
+    
+    # Default to not validated
+    state["validated"] = False
+    
+    # Get the agent that generated the response
+    agent = AgentRegistry.create(intent)
+    
+    # Skip validation for agents that don't need it
+    if not agent.needs_validation:
+        state["validated"] = True
+        return state
+    
+    # Perform validation checks
+    # This is a simplified example - in a real system, you would have more
+    # sophisticated validation logic specific to each agent type
+    validation_result = {
+        "passed": True,
+        "checks": [
+            {"name": "content_safety", "passed": True, "details": "No unsafe content detected"},
+            {"name": "quality", "passed": True, "details": "Response meets quality standards"}
+        ]
+    }
+    
+    # For SQL agents, check for potentially unsafe SQL operations
+    if intent == "sql":
+        unsafe_keywords = ["DROP", "DELETE", "TRUNCATE", "ALTER", "UPDATE", "INSERT"]
+        for keyword in unsafe_keywords:
+            if keyword in agent_response.upper():
+                validation_result["passed"] = False
+                validation_result["checks"].append({
+                    "name": "sql_safety",
+                    "passed": False,
+                    "details": f"Potentially unsafe SQL operation detected: {keyword}"
+                })
+    
+    # Update state with validation result
+    state["validated"] = validation_result["passed"]
+    state["validation_result"] = validation_result
+    
+    return state
+
+
+def should_validate(state: AgentState) -> Literal["validate", "skip"]:
+    """
+    Determine whether to validate the agent response.
+    
+    This conditional router checks if the agent requires validation.
+    
+    Args:
+        state: The current workflow state
+        
+    Returns:
+        "validate" if validation is required, "skip" otherwise
+    """
+    intent = state.get("intent", "data")
+    agent = AgentRegistry.create(intent)
+    
+    if agent.needs_validation:
+        return "validate"
+    else:
+        return "skip"

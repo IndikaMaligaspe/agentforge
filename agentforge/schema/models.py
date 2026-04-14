@@ -7,11 +7,18 @@ uses Pydantic v2 for validation, type safety, and serialization.
 
 The schema is organized hierarchically:
 - ProjectConfig (root model)
+  - EntryConfig (how the graph receives work — v2)
   - ProjectMetadata (project identity)
   - AgentConfig (one or more agents)
     - ToolConfig (optional tools for each agent)
   - DatabaseConfig (database connection settings)
   - WorkflowConfig (LangGraph workflow options)
+  - ReactConfig (per-pattern config for react pattern — v2)
+  - StepConfig (one step in a workflow state machine — v2)
+  - WorkflowStateMachineConfig (per-pattern config for workflow pattern — v2)
+  - FanoutConfig (per-pattern config for fanout pattern — v2)
+  - OrchestratorConfig (per-pattern config for orchestrator pattern — v2)
+  - PlannerConfig (per-pattern config for planner pattern — v2)
   - APIConfig (FastAPI settings)
     - CORSConfig (CORS settings)
   - ObservabilityConfig (logging and tracing)
@@ -21,14 +28,28 @@ The schema is organized hierarchically:
   - TestingConfig (eval framework and benchmark options)
 
 Each model includes field-level validation and documentation.
+
+Backwards compatibility
+-----------------------
+Configs that predate v2 (no `entry`, no `pattern` top-level keys) are
+transparently rewritten at parse time by a ``model_validator(mode="before")``
+into the equivalent v2 shape:
+
+    entry.type = "intent_router"
+    pattern    = "orchestrator"
+    orchestrator.kind = "llm"
+
+This preserves the existing ``query_router -> supervisor -> agents`` topology.
+All new top-level fields default to ``None`` and are omitted from
+``model_dump(exclude_none=True)``, so legacy round-trips are byte-clean.
 """
 from __future__ import annotations
 
 import warnings
 from enum import Enum
-from typing import Annotated, Literal
+from typing import Annotated, Any, Final, Literal, Union, get_args
 from pydantic import (
-    BaseModel, Field, field_validator, model_validator,
+    BaseModel, ConfigDict, Field, field_validator, model_validator,
     AnyHttpUrl, StringConstraints,
 )
 
@@ -83,12 +104,73 @@ Must start with an uppercase letter, followed by letters or numbers.
 """
 
 
-class ToolConfig(BaseModel):
-    """A single LangChain / MCP tool wired into an agent."""
-    name: str = Field(..., description="Python identifier used as tool function name")
-    description: str = Field(..., description="Tool description shown to the LLM")
-    # Optional: MCP tool reference (if tool is exposed by mcp_server)
-    mcp_resource: str | None = Field(None, description="e.g. 'execute_sql' from mcp_server")
+# ── Tool tagged union (TODO-v2-7) ────────────────────────────────────────────
+
+# Shared slug constraint for tool.name — must be a valid Python identifier prefix.
+_ToolNameStr = Annotated[
+    str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*$", min_length=1, max_length=64)
+]
+
+
+class McpTool(BaseModel):
+    """An MCP-backed tool connecting to an MCP server via langchain-mcp-adapters."""
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["mcp"] = Field("mcp", description="Tool transport kind discriminator.")
+    name: _ToolNameStr = Field(..., description="Python identifier used as tool function name.")
+    description: str = Field(..., description="Tool description shown to the LLM.")
+    # Optional reference to a resource exposed by mcp_server.py in the scaffolded project.
+    mcp_resource: str | None = Field(None, description="e.g. 'execute_sql' from mcp_server.")
+
+
+class HttpTool(BaseModel):
+    """An HTTP(S) tool that calls an arbitrary REST endpoint using httpx."""
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["http"] = Field(..., description="Tool transport kind discriminator.")
+    name: _ToolNameStr = Field(..., description="Python identifier used as tool function name.")
+    description: str = Field(..., description="Tool description shown to the LLM.")
+    url: AnyHttpUrl = Field(..., description="Base URL of the REST endpoint.")
+    method: Literal["GET", "POST", "PUT", "PATCH", "DELETE"] = Field(
+        "GET", description="HTTP method for the tool call."
+    )
+    auth_env_var: str | None = Field(
+        None,
+        description="Name of the env var holding the bearer token. Read at call time.",
+    )
+    timeout_s: float = Field(
+        30.0,
+        gt=0,
+        le=600,
+        description="Per-call HTTP timeout in seconds. Must be > 0 and <= 600.",
+    )
+
+
+class AgentTool(BaseModel):
+    """A tool that calls another AgentForge-generated service over JWT-authenticated HTTP."""
+    model_config = ConfigDict(extra="forbid")
+    kind: Literal["agent"] = Field(..., description="Tool transport kind discriminator.")
+    name: _ToolNameStr = Field(..., description="Python identifier used as tool function name.")
+    description: str = Field(..., description="Tool description shown to the LLM.")
+    service_url: AnyHttpUrl = Field(
+        ..., description="Base URL of the downstream AgentForge service."
+    )
+    agent_key: str = Field(
+        ..., description="Identifies the downstream agent within the service."
+    )
+    auth_env_var: str | None = Field(
+        None,
+        description="Name of the env var holding the JWT bearer token. Read at call time.",
+    )
+
+
+# Tagged union — discriminated on the 'kind' field.
+# The before-validator in ProjectConfig._inject_v2_defaults_for_legacy_configs
+# ensures that any tool entry without a 'kind' key is rewritten to kind="mcp"
+# before Pydantic attempts to resolve the discriminator.
+Tool = Annotated[Union[McpTool, HttpTool, AgentTool], Field(discriminator="kind")]
+
+# Backwards-compatibility alias: pre-v2-7 code that imported ToolConfig by name
+# (tests, CLI prompts, etc.) continues to work — ToolConfig IS McpTool.
+ToolConfig = McpTool
 
 
 class AgentConfig(BaseModel):
@@ -100,7 +182,7 @@ class AgentConfig(BaseModel):
         "You are a helpful assistant.",
         description="System prompt injected into the ReAct agent",
     )
-    tools: list[ToolConfig] = Field(default_factory=list)
+    tools: list[Tool] = Field(default_factory=list)
     needs_validation: bool = Field(
         False,
         description="If True, supervisor routes this agent's output through validation_node",
@@ -348,6 +430,273 @@ class ProjectMetadata(BaseModel):
     email: str = Field("you@example.com")
 
 
+# ── v2 pattern sub-configs ────────────────────────────────────────────────────
+
+_PATTERN_LITERALS = Literal["react", "workflow", "fanout", "orchestrator", "planner"]
+"""Canonical set of execution pattern names. Used as a type alias for field declarations."""
+
+LEGACY_DEFAULT_PATTERN: Final[str] = "orchestrator"
+"""The implicit pattern used for configs that predate the v2 `pattern` top-level key.
+This is the single source of truth for the literal string — all other modules must
+import this constant rather than hardcoding the string.
+"""
+
+
+def is_valid_pattern(name: str) -> bool:
+    """Return True if *name* is a member of ``_PATTERN_LITERALS``.
+
+    Uses ``typing.get_args`` so the check is always in sync with the
+    ``_PATTERN_LITERALS`` Literal type and never needs a parallel list.
+
+    Args:
+        name: The pattern name to validate.
+
+    Returns:
+        ``True`` if *name* is one of the allowed pattern literals.
+    """
+    return name in get_args(_PATTERN_LITERALS)
+
+_FLAGS_COMPATIBLE_PATTERNS: frozenset[str] = frozenset({"orchestrator", "react"})
+"""Patterns that support workflow.enable_feedback_loop and enable_validation_node.
+Derived as the complement of the non-interactive batch patterns in _PATTERN_LITERALS."""
+
+
+def pattern_supports_feedback_loop(pattern: str | None) -> bool:
+    """Return True if workflow.enable_feedback_loop / enable_validation_node are valid for this pattern.
+
+    This is the single source of truth for pattern compatibility checks.
+    Call sites should use this helper instead of testing membership in
+    ``_FLAGS_COMPATIBLE_PATTERNS`` directly.
+
+    Args:
+        pattern: The pattern string from ``ProjectConfig.pattern``, or ``None``
+            (no pattern set — treated as compatible).
+
+    Returns:
+        ``True`` when *pattern* is ``None`` or is one of the patterns that
+        support feedback-loop / validation-node flags (currently ``"orchestrator"``
+        and ``"react"``).
+    """
+    return pattern is None or pattern in _FLAGS_COMPATIBLE_PATTERNS
+
+
+_ENTRY_TYPE_LITERALS = Literal["intent_router", "passthrough", "direct"]
+"""Canonical set of entry type names. Used as a type alias for field declarations."""
+
+
+class EntryConfig(BaseModel):
+    """
+    How the graph receives work (v2).
+
+    - ``intent_router``: LLM parses free text and routes to an agent by intent
+      (equivalent to the existing ``query_router_node`` topology).
+    - ``passthrough``: Caller supplies the intent; LLM only extracts structured inputs.
+    - ``direct``: Structured params come in directly — no LLM parsing at the entry.
+    """
+    type: _ENTRY_TYPE_LITERALS = Field(
+        ...,
+        description="Entry type: 'intent_router', 'passthrough', or 'direct'.",
+    )
+    screen_context_fields: list[str] | None = Field(
+        None,
+        description="Context variable names injected into the entry node prompt (optional).",
+    )
+
+
+class ReactConfig(BaseModel):
+    """Per-pattern configuration for the ``react`` execution pattern (v2)."""
+    max_steps: int = Field(12, ge=1, description="Maximum tool-call iterations before the loop terminates.")
+    tool_choice: Literal["auto", "required"] = Field(
+        "auto",
+        description="LangChain tool_choice setting passed to the bound LLM.",
+    )
+    temperature: float = Field(
+        0.0,
+        ge=0.0,
+        le=2.0,
+        description="LLM sampling temperature for the ReAct agent. 0.0 means deterministic output.",
+    )
+
+
+class StepConfig(BaseModel):
+    """
+    One step in a deterministic workflow state machine (v2, ``pattern: workflow``).
+
+    Each step becomes a node in the generated LangGraph ``StateGraph``.
+    The ``key`` is the Python identifier used as the node name; ``description``
+    is embedded in the generated module docstring for readability.
+    """
+    key: SlugStr = Field(
+        ...,
+        description=(
+            "Slug-style identifier for this step (lowercase, underscores). "
+            "Used as the LangGraph node name and the generated function name."
+        ),
+    )
+    description: str = Field(
+        "",
+        description="Human-readable description of what this step does. Embedded in the generated docstring.",
+    )
+
+
+class WorkflowStateMachineConfig(BaseModel):
+    """
+    Per-pattern configuration for the ``workflow`` execution pattern (v2).
+
+    A deterministic state-machine workflow with optional human-in-the-loop
+    interrupts at named steps.
+
+    ``steps`` defines the ordered sequence of nodes; the graph is wired as
+    ``START → steps[0] → steps[1] → ... → steps[-1] → END``.
+
+    ``hitl_before`` lists the step keys at which LangGraph should interrupt
+    *before* executing that node (passed to ``.compile(interrupt_before=...)``).
+    Every entry in ``hitl_before`` must reference a declared step key.
+    """
+    steps: list[StepConfig] = Field(
+        default_factory=list,
+        description=(
+            "Ordered list of step nodes in the workflow. "
+            "At least one step is required when pattern='workflow'. "
+            "The graph is wired START → step[0] → ... → step[N-1] → END."
+        ),
+    )
+    hitl_before: list[str] = Field(
+        default_factory=list,
+        description=(
+            "Step keys at which LangGraph will interrupt before execution (HITL). "
+            "Every entry must match a declared step key."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _validate_hitl_before_references_declared_steps(self) -> "WorkflowStateMachineConfig":
+        """
+        Ensure every ``hitl_before`` entry references a declared step key.
+
+        This prevents silent misconfiguration where a typo in ``hitl_before``
+        would result in a LangGraph interrupt that never fires because the
+        node name does not match any step in the graph.
+
+        Raises:
+            ValueError: If any ``hitl_before`` entry is not a declared step key.
+        """
+        if not self.hitl_before:
+            return self
+        declared_keys = {step.key for step in self.steps}
+        unknown = [k for k in self.hitl_before if k not in declared_keys]
+        if unknown:
+            raise ValueError(
+                f"workflow_sm.hitl_before references step key(s) not declared in "
+                f"workflow_sm.steps: {unknown}. "
+                f"Declared keys: {sorted(declared_keys) if declared_keys else '(none)'}."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_step_keys_unique(self) -> "WorkflowStateMachineConfig":
+        """
+        Ensure all step keys within steps are unique.
+
+        Duplicate step keys would cause LangGraph to silently overwrite a node
+        registration, resulting in a graph that does not match the configured
+        topology.  This check catches duplicates early with an actionable message.
+
+        Raises:
+            ValueError: If any step key appears more than once in steps.
+        """
+        keys = [s.key for s in self.steps]
+        dupes = sorted({k for k in keys if keys.count(k) > 1})
+        if dupes:
+            raise ValueError(
+                f"workflow_sm.steps contains duplicate step key(s): {dupes}. "
+                f"Each step key must be unique (used as LangGraph node name)."
+            )
+        return self
+
+
+class FanoutConfig(BaseModel):
+    """Per-pattern configuration for the ``fanout`` execution pattern (v2)."""
+    reducer: Literal["concat", "merge_dict"] = Field(
+        "concat",
+        description=(
+            "Strategy used to combine per-agent results: "
+            "'concat' appends to a list; 'merge_dict' merges dicts by key."
+        ),
+    )
+    results_field: Annotated[str, StringConstraints(pattern=r"^[a-z][a-z0-9_]*$", min_length=1, max_length=64)] = Field(
+        "fanout_results",
+        description=(
+            "Name of the state field that collects per-agent results via the "
+            "Annotated[list, operator.add] reducer. Must be a valid Python identifier "
+            "(lowercase, underscores). Defaults to 'fanout_results'."
+        ),
+    )
+
+
+class OrchestratorConfig(BaseModel):
+    """
+    Per-pattern configuration for the ``orchestrator`` execution pattern (v2).
+
+    The orchestrator dispatches work to one or more agents and collects their
+    outputs. It can operate in two sub-kinds:
+
+    - ``llm``: The supervisor/orchestrator node is an LLM that decides routing
+      dynamically (equivalent to the existing LLM-based supervisor).
+    - ``rule``: Routing is deterministic, driven by configuration rather than
+      an LLM call.
+    """
+    kind: Literal["llm", "rule"] = Field(
+        ...,
+        description="Orchestrator sub-kind: 'llm' (dynamic LLM routing) or 'rule' (deterministic).",
+    )
+
+
+class PlannerConfig(BaseModel):
+    """Per-pattern configuration for the ``planner`` execution pattern (v2)."""
+    max_replans: int = Field(
+        2,
+        ge=0,
+        le=10,
+        description=(
+            "Maximum number of replan attempts before the planner gives up. "
+            "Both precheck failures and validator rejections count against this limit."
+        ),
+    )
+    max_concurrency: int = Field(
+        4,
+        ge=1,
+        description="Maximum number of plan steps executed concurrently by SolverNode.",
+    )
+    precheck_enabled: bool = Field(
+        True,
+        description=(
+            "Run PlanPrecheckNode (structural DAG validation — no LLM call) "
+            "before executing any plan steps."
+        ),
+    )
+    validator_enabled: bool = Field(
+        True,
+        description="Run ValidatorNode (LLM post-execution coverage check) after SolverNode.",
+    )
+    composer_enabled: bool = Field(
+        True,
+        description="Run ComposerNode to stitch solver results into a final answer.",
+    )
+    llm_model: str = Field(
+        "gpt-4o-mini",
+        description="LLM model used for planner, validator, and composer nodes.",
+    )
+    llm_temperature: float = Field(
+        0.0,
+        ge=0.0,
+        le=2.0,
+        description="LLM sampling temperature for planner, validator, and composer nodes.",
+    )
+
+
+# ── Root model ────────────────────────────────────────────────────────────────
+
 class ProjectConfig(BaseModel):
     """
     Root model — the full project.yaml document.
@@ -406,7 +755,44 @@ class ProjectConfig(BaseModel):
       enable_benchmarks: true       # default: false (opt-in)
 
     enable_provider_registry: false  # default; set true to generate backend/config/provider_registry.py
+
+    # v2 fields (optional — omitted in legacy configs):
+    entry:
+      type: intent_router
+    pattern: orchestrator
+    orchestrator:
+      kind: llm
     """
+    # ── v2 top-level fields (all optional; None means legacy/unset) ────────────
+    entry: EntryConfig | None = Field(
+        None,
+        description=(
+            "How the graph receives work (v2). "
+            "Injected automatically for legacy configs as 'intent_router'."
+        ),
+    )
+    pattern: _PATTERN_LITERALS | None = Field(
+        None,
+        description=(
+            "Execution pattern (v2): react | workflow | fanout | orchestrator | planner. "
+            "Injected automatically for legacy configs as 'orchestrator'."
+        ),
+    )
+    react: ReactConfig | None = Field(None, description="Config for pattern='react' (v2).")
+    workflow_sm: WorkflowStateMachineConfig | None = Field(
+        None,
+        description=(
+            "Config for pattern='workflow' (v2). The YAML key is 'workflow_sm' (not 'workflow') "
+            "to avoid collision with the existing top-level 'workflow: WorkflowConfig' block."
+        ),
+    )
+    fanout: FanoutConfig | None = Field(None, description="Config for pattern='fanout' (v2).")
+    orchestrator: OrchestratorConfig | None = Field(
+        None, description="Config for pattern='orchestrator' (v2)."
+    )
+    planner: PlannerConfig | None = Field(None, description="Config for pattern='planner' (v2).")
+
+    # ── existing fields ────────────────────────────────────────────────────────
     metadata: ProjectMetadata
     agents: list[AgentConfig] = Field(..., min_length=1)
     database: DatabaseConfig = Field(default_factory=lambda: DatabaseConfig())  # type: ignore[call-arg]
@@ -421,6 +807,79 @@ class ProjectConfig(BaseModel):
         False,
         description="Generate backend/config/provider_registry.py in the scaffolded project.",
     )
+
+    # ── backwards-compat validator ─────────────────────────────────────────────
+
+    @model_validator(mode="before")
+    @classmethod
+    def _inject_v2_defaults_for_legacy_configs(cls, data: Any) -> Any:
+        """
+        Detect legacy project.yaml shape and rewrite it to the equivalent v2 shape.
+
+        A config is considered *legacy* when ALL of the following hold:
+        - No ``entry`` key present
+        - No ``pattern`` key present
+        - ``workflow.default_intent`` is set (i.e. it is an intent-router style config)
+        - At least one agent is declared
+
+        Legacy configs are rewritten to:
+            entry.type      = "intent_router"
+            pattern         = "orchestrator"
+            orchestrator    = {kind: "llm"}
+
+        Additionally, any Tool that is missing a ``kind`` field gets ``kind="mcp"``
+        defaulted here so that old tool declarations keep working transparently.
+
+        This validator runs *before* field construction so the injected values
+        participate in the normal Pydantic validation pipeline.
+        """
+        if not isinstance(data, dict):
+            return data
+
+        data = dict(data)  # shallow copy — never mutate caller's dict
+
+        # Default missing tool `kind` to "mcp" for every agent's tool list.
+        # This handles configs predating v2 tool-kind tagging (TODO-v2-7 risk).
+        raw_agents = data.get("agents", [])
+        if isinstance(raw_agents, list):
+            patched_agents = []
+            for agent in raw_agents:
+                if isinstance(agent, dict):
+                    agent = dict(agent)
+                    raw_tools = agent.get("tools", [])
+                    if isinstance(raw_tools, list):
+                        patched_tools = []
+                        for tool in raw_tools:
+                            if isinstance(tool, dict) and tool.get("kind") is None:
+                                tool = dict(tool)
+                                tool["kind"] = "mcp"
+                            patched_tools.append(tool)
+                        agent["tools"] = patched_tools
+                patched_agents.append(agent)
+            data["agents"] = patched_agents
+
+        # Only inject v2 entry/pattern/orchestrator when the config is legacy.
+        has_entry = "entry" in data
+        has_pattern = "pattern" in data
+
+        if has_entry or has_pattern:
+            # Already a v2-shaped config — no injection needed.
+            return data
+
+        workflow_raw = data.get("workflow", {})
+        workflow_dict = workflow_raw if isinstance(workflow_raw, dict) else {}
+        has_default_intent = "default_intent" in workflow_dict
+        has_agents = bool(data.get("agents"))
+
+        if has_default_intent and has_agents:
+            # Classic legacy shape: inject v2 fields.
+            data["entry"] = {"type": "intent_router"}
+            data["pattern"] = LEGACY_DEFAULT_PATTERN
+            data["orchestrator"] = {"kind": "llm"}
+
+        return data
+
+    # ── existing after validators ──────────────────────────────────────────────
 
     @model_validator(mode="after")
     def check_default_intent_registered(self) -> "ProjectConfig":
@@ -486,5 +945,101 @@ class ProjectConfig(BaseModel):
             raise ValueError(
                 f"workflow.enable_checkpointing requires database.backend='postgres' "
                 f"(got '{self.database.backend.value}')"
+            )
+        return self
+
+    @model_validator(mode="after")
+    def check_workflow_flags_pattern_compat(self) -> "ProjectConfig":
+        """
+        Guard workflow.enable_feedback_loop and enable_validation_node against incompatible patterns.
+
+        These flags only make sense in the ``orchestrator`` and ``react`` patterns.
+        When a v2 config explicitly sets ``pattern`` to ``workflow``, ``fanout``, or
+        ``planner``, enabling them is a misconfiguration that would generate dead code.
+
+        Legacy configs resolve to ``pattern=orchestrator`` via the before-validator
+        so they are never affected by this guard.
+
+        Raises:
+            ValueError: When an incompatible pattern is set alongside a flag that
+                requires orchestrator/react topology.
+        """
+        if self.pattern in _FLAGS_COMPATIBLE_PATTERNS or self.pattern is None:
+            return self
+        if self.workflow.enable_feedback_loop:
+            raise ValueError(
+                f"workflow.enable_feedback_loop is not supported for pattern='{self.pattern}'. "
+                "Set enable_feedback_loop=false or switch to pattern='orchestrator' or 'react'."
+            )
+        if self.workflow.enable_validation_node:
+            raise ValueError(
+                f"workflow.enable_validation_node is not supported for pattern='{self.pattern}'. "
+                "Set enable_validation_node=false or switch to pattern='orchestrator' or 'react'."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def check_workflow_sm_steps_required(self) -> "ProjectConfig":
+        """
+        Enforce that ``workflow_sm.steps`` has at least one entry when ``pattern='workflow'``.
+
+        A workflow state machine with no steps cannot produce a valid LangGraph graph
+        (there are no nodes to wire between START and END). This check fires only
+        when the user has explicitly set ``pattern: workflow``; other patterns are
+        unaffected.
+
+        Raises:
+            ValueError: When ``pattern='workflow'`` and ``workflow_sm.steps`` is empty
+                or ``workflow_sm`` is absent.
+        """
+        if self.pattern != "workflow":
+            return self
+        if self.workflow_sm is None or len(self.workflow_sm.steps) == 0:
+            raise ValueError(
+                "workflow_sm.steps must contain at least one step when pattern='workflow'. "
+                "Add one or more steps under the 'workflow_sm.steps' key in your project.yaml."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_agent_keys_unique(self) -> "ProjectConfig":
+        """
+        Enforce that every agent key is unique within the project.
+
+        Agent keys are used as LangGraph node names; duplicate node names would
+        cause silent overwrites during graph compilation, resulting in a graph
+        that does not match the configured topology.
+
+        Raises:
+            ValueError: If any agent key appears more than once in ``agents``.
+        """
+        keys = [a.key for a in self.agents]
+        dupes = sorted({k for k in keys if keys.count(k) > 1})
+        if dupes:
+            raise ValueError(
+                f"agents contains duplicate key(s): {dupes}. "
+                f"Each agent key must be unique (used as LangGraph node name)."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_orchestrator_config_matches_pattern(self) -> "ProjectConfig":
+        """
+        Guard against setting the ``orchestrator`` sub-config on a non-orchestrator pattern.
+
+        ``pattern=None`` is tolerated because the legacy-compat before-validator has
+        not yet resolved the pattern for old configs; after the before-validator fires
+        for a true legacy config the pattern will be ``"orchestrator"``.  If a user
+        explicitly supplies a v2 config with ``orchestrator`` set and a different
+        pattern, that is a misconfiguration that this validator rejects.
+
+        Raises:
+            ValueError: When ``orchestrator`` is set and ``pattern`` is neither
+                ``None`` nor ``"orchestrator"``.
+        """
+        if self.orchestrator is not None and self.pattern not in (None, "orchestrator"):
+            raise ValueError(
+                f"orchestrator config is set but pattern='{self.pattern}'. "
+                f"Set pattern='orchestrator' or remove the orchestrator sub-config."
             )
         return self

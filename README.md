@@ -382,6 +382,205 @@ class TableWidget(BaseModel):
 Widget = Union[TextWidget, TableWidget]  # extend as needed
 ```
 
+## Composable patterns (v2)
+
+AgentForge v2 separates *entry* — how requests arrive at your service — from
+*execution pattern* — what the graph does once a request lands. These two
+dimensions are independent. Pick any entry type with any pattern. Existing
+configs that predate v2 continue to work unchanged via schema auto-migration.
+
+### Execution patterns
+
+#### `react`
+
+Use when you need a single agent that can call tools iteratively until it
+reaches an answer. The agent runs a bounded ReAct loop: observe, think, act,
+repeat. Well-suited for co-pilots and assistants that need to look things up
+and synthesise a response.
+
+```yaml
+pattern: react
+
+react:
+  max_steps: 15
+  tool_choice: auto
+  temperature: 0.2
+
+agents:
+  - key: copilot
+    class_name: CopilotAgent
+    llm_model: gpt-4o
+```
+
+Full example: `examples/copilot.yaml`
+
+#### `workflow`
+
+Use when the execution path is fully deterministic and must follow a fixed
+sequence of named steps. Supports human-in-the-loop (HITL) interrupts at any
+step boundary. Best for approval workflows, multi-stage data pipelines, and
+any flow where the step order is known at design time.
+
+```yaml
+pattern: workflow
+
+workflow_sm:
+  steps:
+    - key: collect_inputs
+      description: Gather and normalise campaign configuration
+    - key: human_review
+      description: Pause for a human reviewer to approve or reject
+  hitl_before:
+    - human_review
+
+agents:
+  - key: campaign_ops
+    class_name: CampaignOpsAgent
+    llm_model: gpt-4o-mini
+```
+
+Full example: `examples/workflow.yaml`
+
+#### `fanout`
+
+Use when multiple independent specialist agents should analyse the same input
+concurrently and their results must be merged. The graph forks to all agents
+in parallel and then applies a reducer. Ideal for parallel scoring pipelines
+where each agent examines a different dimension of the same artifact.
+
+```yaml
+pattern: fanout
+
+fanout:
+  reducer: merge_dict
+  results_field: analysis_scores
+
+agents:
+  - key: budget_analyzer
+    class_name: BudgetAnalyzerAgent
+    llm_model: gpt-4o-mini
+```
+
+Full example: `examples/fanout.yaml`
+
+#### `orchestrator`
+
+Use when a supervisor — either an LLM or a deterministic rule set — needs to
+decide which specialist agent handles each request, and may chain multiple
+agents sequentially or in parallel. This is the default pattern for configs
+that predate v2. The `orchestrator.kind` field chooses between LLM-based and
+rule-based routing.
+
+```yaml
+pattern: orchestrator
+
+orchestrator:
+  kind: rule   # or: llm
+
+agents:
+  - key: campaign_scorer
+    class_name: CampaignScorerAgent
+    llm_model: gpt-4o-mini
+```
+
+Full example: `examples/campaign_health.yaml`
+
+#### `planner`
+
+Use when requests must be decomposed into a dependency graph of sub-tasks,
+executed concurrently, and then validated for coverage before a final report
+is composed. Supports automatic replanning when the validator detects gaps.
+Best for open-ended research or analysis briefs where the step set is not
+known in advance.
+
+```yaml
+pattern: planner
+
+planner:
+  max_replans: 2
+  max_concurrency: 4
+  precheck_enabled: true
+  validator_enabled: true
+  composer_enabled: true
+  llm_model: gpt-4o
+  llm_temperature: 0.0
+
+agents:
+  - key: researcher
+    class_name: ResearcherAgent
+    llm_model: gpt-4o-mini
+```
+
+Full example: `examples/planner.yaml`
+
+### Entry types
+
+The entry type controls what happens to a request before it reaches the
+execution pattern. All three entry types work with any pattern.
+
+| Use case | Entry type |
+|----------|------------|
+| Chatbot or API that receives free text and must classify intent before routing | `intent_router` |
+| UI co-pilot or caller that already knows the target agent and supplies the intent | `passthrough` |
+| Automation pipeline or internal service that sends structured parameters directly | `direct` |
+
+```yaml
+# LLM classifies free text and routes to the right agent
+entry:
+  type: intent_router
+
+# Caller knows the intent; LLM only extracts structured inputs
+entry:
+  type: passthrough
+
+# Structured params arrive directly; no LLM parsing at the entry
+entry:
+  type: direct
+```
+
+`entry` is optional. Configs that omit it remain valid and no entry node is
+generated.
+
+### Tool kinds
+
+Every tool under `agents[].tools[]` must declare a `kind`. Existing configs
+without `kind` are automatically assigned `kind: mcp` by the schema validator.
+
+| Kind | Description |
+|------|-------------|
+| `mcp` | Calls a local MCP server resource; requires `mcp_resource`. |
+| `http` | Calls an external HTTP endpoint; requires `url`, `method`, `auth_env_var`. |
+| `agent` | Calls a remote AgentForge service; requires `service_url`, `agent_key`, `auth_env_var`. |
+
+```yaml
+tools:
+  # MCP tool — internal data access via MCP server
+  - kind: mcp
+    name: fetch_campaign_metrics
+    description: Retrieve aggregated campaign metrics
+    mcp_resource: fetch_campaign_metrics
+
+  # HTTP tool — external third-party API call
+  - kind: http
+    name: get_audience_insights
+    description: Fetch audience segment breakdown from the insights API
+    url: https://example.com/api/v1/audience-insights
+    method: GET
+    auth_env_var: INSIGHTS_API_KEY
+    timeout_s: 15.0
+
+  # Agent tool — delegate to a sibling AgentForge service
+  - kind: agent
+    name: campaign_health_check
+    description: Run the Campaign Health Score pipeline
+    service_url: https://example.com/campaign-health/
+    agent_key: campaign_scorer
+    auth_env_var: CAMPAIGN_HEALTH_SERVICE_JWT
+```
+
+See `docs/migration_v1_to_v2.md` for upgrading existing configs and
+`docs/flag_cheatsheet.md` for the full list of CLI flags.
+
 ## Development
 
 ### Setup Development Environment

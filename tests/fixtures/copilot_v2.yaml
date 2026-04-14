@@ -1,0 +1,81 @@
+# tests/fixtures/copilot_v2.yaml
+#
+# Test-grade v2-native fixture for the passthrough+react copilot topology.
+# Authored directly against the v2 schema — no legacy-compat shim required.
+#
+# Validates:
+#   - entry.type: passthrough         (explicit, caller supplies intent)
+#   - entry.screen_context_fields     (UI context injection)
+#   - pattern: react                  (single-agent ReAct loop)
+#   - Single agent: copilot
+#   - agent-kind tool (calls campaign_health service via JWT)
+#   - JWT auth: RS256, JWKS endpoint, issuer, audience
+
+metadata:
+  name: copilot_v2
+  description: UI co-pilot v2-native test fixture with passthrough entry and react pattern.
+  python_version: "3.12"
+  author: Test Fixture
+  email: test@example.com
+
+entry:
+  type: passthrough
+  screen_context_fields:
+    - screen_name
+    - selected_campaign_id
+
+pattern: react
+
+react:
+  max_steps: 10
+  tool_choice: auto
+  temperature: 0.0
+
+agents:
+  - key: copilot
+    class_name: CopilotAgent
+    llm_model: gpt-4o
+    system_prompt: You are a helpful co-pilot providing campaign insights.
+    tools:
+      - kind: agent
+        name: campaign_health_check
+        description: Run the Campaign Health Score pipeline for the selected account.
+        service_url: https://example.com/campaign-health/
+        agent_key: campaign_scorer
+        auth_env_var: CAMPAIGN_HEALTH_SERVICE_JWT
+    needs_validation: false
+    extra_return_keys: ["screen_context", "recommended_action"]
+
+database:
+  backend: postgres
+  tables:
+    - copilot_sessions
+  connection_env_var: DATABASE_URL
+  pool_size: 5
+  max_overflow: 10
+  use_alembic: false
+
+workflow:
+  enable_feedback_loop: false
+  enable_validation_node: false
+  router_llm_model: gpt-4o-mini
+  router_llm_provider: openai
+  default_intent: copilot
+  max_feedback_attempts: 2
+  enable_checkpointing: false
+
+api:
+  title: Copilot v2 API
+  query_max_length: 2000
+
+security:
+  auth_type: jwt
+  jwt_algorithm: RS256
+  jwks_url: https://example.com/.well-known/jwks.json
+  jwt_issuer: https://example.com
+  jwt_audience: copilot-v2-api
+
+ci:
+  provider: github
+  python_version: "3.12"
+  installer: uv

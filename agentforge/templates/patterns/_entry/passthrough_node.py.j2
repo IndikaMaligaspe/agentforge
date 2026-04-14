@@ -1,0 +1,138 @@
+{# patterns/_entry/passthrough_node.py.j2
+   Passthrough entry node: caller supplies intent; LLM extracts structured inputs
+   from the natural-language query text.
+
+   Context vars used:
+     router_llm_provider  — "openai" | "anthropic"
+     router_llm_model     — e.g. "gpt-4o-mini"
+     valid_intents        — list[str]  (agent keys — used for docstring only)
+     entry_screen_context_fields — list[str] | None  (extra context var names)
+#}
+"""
+Passthrough Entry Node for the LangGraph workflow.
+
+This node is invoked when the entry type is ``passthrough``.
+The caller supplies ``intent`` directly in the request body;
+the LLM is responsible only for extracting a structured ``inputs``
+dict from the free-text ``query`` field.
+
+Valid intents for this project: {% for intent in valid_intents %}{{ intent }}{% if not loop.last %}, {% endif %}{% endfor %}
+"""
+{% if router_llm_provider == "anthropic" %}
+from langchain_anthropic import ChatAnthropic
+{% else %}
+from langchain_openai import ChatOpenAI
+{% endif %}
+import json
+from ..state import AgentState
+from observability.logging import get_logger, log_with_props, log_execution_time, RequestContext
+
+logger = get_logger(__name__)
+
+{% if entry_screen_context_fields %}
+# Screen-context fields injected into the extraction prompt at runtime.
+# These contextvars must be populated by the request middleware before the
+# graph is invoked.  See middleware/logging_middleware.py for reference.
+import contextvars as _cv
+_SCREEN_CTX: dict[str, _cv.ContextVar] = {
+{% for field in entry_screen_context_fields %}
+    "{{ field }}": _cv.ContextVar("{{ field }}", default=None),
+{% endfor %}
+}
+{% endif %}
+
+
+async def passthrough_node(state: AgentState) -> AgentState:
+    """
+    Extract structured inputs from ``state["query"]`` using a fast LLM call.
+
+    The intent has already been supplied by the caller and is present in
+    ``state["intent"]``.  This node does NOT classify the query; it only
+    produces the structured ``inputs`` dict that the downstream pattern graph
+    expects.
+
+    On any parse error the node falls back to an empty ``inputs`` dict and
+    logs a warning — the downstream graph is expected to handle missing inputs
+    gracefully.
+
+    Args:
+        state: The current workflow state.  Must contain ``query`` and ``intent``.
+
+    Returns:
+        Updated state with ``inputs`` merged in.
+    """
+    node_name = "passthrough_node"
+    request_id = RequestContext.get_request_id()
+
+    log_with_props(logger, "info", f"Entering {node_name}",
+                   node=node_name,
+                   request_id=request_id,
+                   query_length=len(state.get("query", "")),
+                   intent=state.get("intent"))
+
+    try:
+        # Reuse the router LLM — cheap, fast, deterministic at temperature=0.
+        {% if router_llm_provider == "anthropic" %}
+        llm = ChatAnthropic(model_name="{{ router_llm_model }}", temperature=0)
+        {% else %}
+        llm = ChatOpenAI(model="{{ router_llm_model }}", temperature=0)
+        {% endif %}
+
+        {% if entry_screen_context_fields %}
+        # Build optional screen-context section from populated contextvars.
+        _ctx_lines = []
+        for _field, _var in _SCREEN_CTX.items():
+            _val = _var.get()
+            if _val is not None:
+                _ctx_lines.append(f"  {_field}: {_val}")
+        _ctx_block = ("\n\nScreen context:\n" + "\n".join(_ctx_lines)) if _ctx_lines else ""
+        {% else %}
+        _ctx_block = ""
+        {% endif %}
+
+        # Build the extraction prompt using f-string concatenation to avoid
+        # .format()-style braces conflicting with Jinja2 template delimiters.
+        _intent_val = state.get("intent", "")
+        _query_val = state.get("query", "")
+        formatted_prompt = (
+            f"Extract the structured parameters from the user's message as a JSON object.\n"
+            f"Intent: {_intent_val}\n"
+            f"Message: {_query_val}"
+            f"{_ctx_block}\n\n"
+            "Return ONLY a JSON object with the extracted parameters. "
+            "If no structured parameters can be extracted, return {}."
+        )
+
+        with log_execution_time(logger, f"{node_name}_llm_invoke"):
+            response = llm.invoke(formatted_prompt)
+
+        raw = response.content.strip()
+        # Strip markdown code fences if the LLM wrapped its answer.
+        if raw.startswith("```"):
+            raw = raw.split("```")[1]
+            if raw.startswith("json"):
+                raw = raw[4:]
+            raw = raw.strip()
+
+        inputs: dict = json.loads(raw)
+        if not isinstance(inputs, dict):
+            inputs = {}
+
+    except Exception as exc:
+        log_with_props(logger, "warning", f"Input extraction failed in {node_name}; using empty inputs",
+                       node=node_name,
+                       request_id=request_id,
+                       error=str(exc))
+        inputs = {}
+
+    updated_state = {
+        **state,
+        "inputs": inputs,
+    }
+
+    log_with_props(logger, "info", f"Exiting {node_name}",
+                   node=node_name,
+                   request_id=request_id,
+                   inputs_keys=list(inputs.keys()))
+
+    return updated_state

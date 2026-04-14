@@ -1,0 +1,69 @@
+"""
+Input sanitization utilities for safe logging and data output.
+
+Provides:
+    sanitize_for_log()   — strips control characters / ANSI codes that enable
+                           log-injection attacks
+pseudonymize_ip()    — replaces identifying octets with a safe placeholder
+                           to protect user privacy in log files"""
+import re
+import hashlib
+from typing import Any
+
+
+def sanitize_for_log(value: Any) -> str:
+    """
+    Remove characters that could be used for log-injection attacks.
+
+    Strips:
+    - ANSI/VT escape sequences (could forge log lines in terminals)
+    - Carriage returns and newlines (classic log-injection vector)
+    - Other ASCII control characters (NUL, BEL, BS, DEL, etc.)
+
+    Args:
+        value: Any value to sanitize.  Non-strings are converted first.
+
+    Returns:
+        Sanitized string safe for inclusion in structured log records.
+    """
+    if not isinstance(value, str):
+        value = str(value)
+
+    # Strip ANSI/VT100 escape sequences
+    value = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", value)
+
+    # Replace control characters (except horizontal tab \x09) with a space
+    value = re.sub(r"[\r\n\x00-\x08\x0b\x0c\x0e-\x1f\x7f]", " ", value)
+
+    return value
+
+def pseudonymize_ip(ip: str) -> str:
+    """
+    Pseudonymize an IP address before writing it to log files.
+
+    - IPv4 → last octet replaced with ``xxx``  (e.g. ``192.168.1.xxx``)
+    - IPv6 / other → replaced with a short, irreversible SHA-256 prefix
+
+    Args:
+        ip: Raw IP address string, may be ``"unknown"`` or empty.
+
+    Returns:
+        Pseudonymized representation safe for log storage.
+    """
+    if not ip or ip.strip() in ("", "unknown"):
+        return "[unknown]"
+
+    try:
+        parts = ip.split(".")
+        if len(parts) == 4 and all(
+            p.isdigit() and 0 <= int(p) <= 255 for p in parts
+        ):
+            # IPv4 — mask last octet
+            return f"{parts[0]}.{parts[1]}.{parts[2]}.xxx"
+
+        # IPv6 or exotic format — replace with a deterministic short hash
+        digest = hashlib.sha256(ip.encode()).hexdigest()[:8]
+        return f"[ip:{digest}]"
+
+    except Exception:
+        return "[unknown]"

@@ -1,4 +1,15 @@
-{# main.py.j2 - FastAPI application for the agent API #}
+{# main.py.j2 - FastAPI application for the agent API
+   Branches on entry_type:
+     "intent_router" — classic free-text query; LLM routes to an agent by intent.
+     "passthrough"   — caller supplies intent; LLM extracts structured inputs only.
+     "direct"        — caller supplies typed {intent, inputs}; no LLM parsing at entry.
+   All three entry types feed the same downstream pattern graph.
+
+   Shared observability/error-handling boilerplate is extracted into the
+   _make_error_response() Python helper below to avoid copy-paste across the
+   passthrough and direct endpoint variants (intent_router uses inline handling
+   for backwards compatibility).
+#}
 from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -26,10 +37,36 @@ async def auth_dep(authorization: str = Header(..., alias="Authorization")) -> d
 from security.auth import get_api_key as auth_dep
 {% endif %}
 from security.sanitizer import sanitize_for_log
+{% if entry_type == "direct" %}
+from graph.direct_entry import DirectEntryRequest
+{% endif %}
 
 # Setup Logging with our centralized configuration
 logger = get_logger(__name__)
 
+{% if entry_type in ("passthrough", "direct") %}
+
+def _make_error_response(e: Exception, request_id: str) -> dict:
+    """Shared helper: log and format a generic error response.
+
+    Extracted here to avoid duplicating the error-handling boilerplate across
+    all three entry-type endpoint variants (intent_router / passthrough / direct).
+    Full exception details are logged internally; only a generic message is
+    returned to the caller.
+    """
+    log_with_props(logger, "error", "Error processing request",
+                   error=str(e),
+                   request_id=request_id,
+                   exc_info=True)
+    return {
+        "success": False,
+        "answer": None,
+        "error": "An internal error occurred while processing your request. Please try again.",
+        "trace_id": request_id,
+    }
+
+
+{% endif %}
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -76,6 +113,7 @@ app.add_middleware(
     allow_credentials={{ allow_credentials }},
 )
 
+{% if entry_type == "intent_router" %}
 # Bounded query length prevents ReDoS and unbounded LLM cost
 class QueryRequest(BaseModel):
     query: str = Field(..., min_length=1, max_length={{ query_max_length }}, description="Natural language query")
@@ -85,6 +123,24 @@ class QueryResponse(BaseModel):
     answer: Union[str, Dict[str, Any]] = Field(None, description="The answer to the query, which can be a string or a widget object.")
     error: Optional[str] = None
     trace_id: Optional[str] = None
+{% elif entry_type == "passthrough" %}
+# passthrough: caller supplies intent; LLM only extracts structured inputs from text.
+class QueryRequest(BaseModel):
+    intent: str = Field(..., min_length=1, max_length={{ query_max_length }}, description="Routing intent supplied by the caller")
+    query: str = Field(..., min_length=1, max_length={{ query_max_length }}, description="Natural language text from which inputs are extracted")
+
+class QueryResponse(BaseModel):
+    success: bool = Field(..., description="Indicates if the request was processed successfully.")
+    answer: Union[str, Dict[str, Any]] = Field(None, description="The answer to the request, which can be a string or a widget object.")
+    error: Optional[str] = None
+    trace_id: Optional[str] = None
+{% elif entry_type == "direct" %}
+class QueryResponse(BaseModel):
+    success: bool = Field(..., description="Indicates if the request was processed successfully.")
+    answer: Union[str, Dict[str, Any]] = Field(None, description="The answer to the request, which can be a string or a widget object.")
+    error: Optional[str] = None
+    trace_id: Optional[str] = None
+{% endif %}
 
 @app.get("/")
 def read_root():
@@ -97,6 +153,7 @@ def health_check():
     return {"status": "healthy"}
 
 {% for endpoint in api.endpoints %}
+{% if entry_type == "intent_router" %}
 @app.post("{{ endpoint }}", response_model=QueryResponse)
 def handle_query(request: QueryRequest{% if enable_auth %}, _key: str = Depends(auth_dep){% endif %}):
     """ Main endpoint to handle natural language queries """
@@ -121,10 +178,7 @@ def handle_query(request: QueryRequest{% if enable_auth %}, _key: str = Depends(
             {% if enable_tracing %}
             result = trace_agent_run(query)
             {% else %}
-            # Import here to avoid circular imports
             from graph.workflow import get_workflow
-
-            # Initialize the workflow with the query
             workflow = get_workflow()
             result = workflow.invoke({"query": query})
             {% endif %}
@@ -160,4 +214,82 @@ def handle_query(request: QueryRequest{% if enable_auth %}, _key: str = Depends(
             "error": "An internal error occurred while processing your query. Please try again.",
             "trace_id": request_id
         }
+{% elif entry_type == "passthrough" %}
+@app.post("{{ endpoint }}", response_model=QueryResponse)
+async def handle_query(request: QueryRequest{% if enable_auth %}, _key: str = Depends(auth_dep){% endif %}):
+    """ Main endpoint to handle requests with caller-supplied intent (passthrough entry) """
+    intent = request.intent
+    query = request.query
+    request_id = RequestContext.get_request_id()
+
+    log_with_props(logger, "info", "Received passthrough request",
+                  intent=intent,
+                  query_length=len(query),
+                  request_id=request_id)
+
+    try:
+        start_time = time.time()
+
+        with log_execution_time(logger, "query_processing"):
+            from graph.nodes.passthrough_node import passthrough_node
+            from graph.workflow import get_workflow
+
+            initial_state = {"query": query, "intent": intent}
+            state_with_inputs = await passthrough_node(initial_state)
+            workflow = get_workflow()
+            result = workflow.invoke(state_with_inputs)
+
+        final_answer = result.get('final_answer')
+        execution_time = time.time() - start_time
+        log_with_props(logger, "info", "Request processed successfully",
+                      execution_time_ms=round(execution_time * 1000, 2),
+                      has_answer=bool(final_answer),
+                      request_id=request_id)
+        return {
+            "success": True,
+            "answer": final_answer,
+            "error": None,
+            "trace_id": request_id,
+        }
+
+    except Exception as e:
+        return _make_error_response(e, request_id)
+{% elif entry_type == "direct" %}
+@app.post("{{ endpoint }}", response_model=QueryResponse)
+def handle_query(request: DirectEntryRequest{% if enable_auth %}, _key: str = Depends(auth_dep){% endif %}):
+    """ Main endpoint to handle typed direct requests (direct entry — no LLM parsing) """
+    intent = request.intent
+    inputs = request.inputs
+    request_id = RequestContext.get_request_id()
+
+    log_with_props(logger, "info", "Received direct entry request",
+                  intent=intent,
+                  inputs_keys=list(inputs.keys()),
+                  request_id=request_id)
+
+    try:
+        start_time = time.time()
+
+        with log_execution_time(logger, "query_processing"):
+            from graph.workflow import get_workflow
+            initial_state = {"intent": intent, "inputs": inputs, "query": ""}
+            workflow = get_workflow()
+            result = workflow.invoke(initial_state)
+
+        final_answer = result.get('final_answer')
+        execution_time = time.time() - start_time
+        log_with_props(logger, "info", "Request processed successfully",
+                      execution_time_ms=round(execution_time * 1000, 2),
+                      has_answer=bool(final_answer),
+                      request_id=request_id)
+        return {
+            "success": True,
+            "answer": final_answer,
+            "error": None,
+            "trace_id": request_id,
+        }
+
+    except Exception as e:
+        return _make_error_response(e, request_id)
+{% endif %}
 {% endfor %}

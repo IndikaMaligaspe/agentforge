@@ -1,0 +1,125 @@
+"""Pytest plugin for saving benchmark test results to a file."""
+
+import json
+import os
+import time
+from datetime import datetime
+from typing import Any
+
+import pytest
+
+
+class BenchmarkReporter:
+    """Pytest plugin to save benchmark test results to a file."""
+
+    def __init__(self):
+        self.test_results: list[dict[str, Any]] = []
+        self.session_start_time = 0
+        self.session_duration = 0
+        self.results_file = os.path.expanduser(".deepeval/.custom_latest_test_results.json")
+
+    @pytest.hookimpl(tryfirst=True)
+    def pytest_sessionstart(self, session):
+        """Called before test session starts."""
+        self.session_start_time = time.time()
+        self.test_results = []
+
+    def pytest_runtest_logreport(self, report):
+        """Called for each test report. Works with pytest-xdist because
+        xdist forwards reports from workers to the master process via this hook."""
+        if report.when == "call":
+            result = {
+                "name": report.nodeid,
+                "outcome": report.outcome,
+                "duration": report.duration,
+            }
+
+            if report.failed:
+                if report.longrepr:
+                    result["error"] = str(report.longrepr)
+                else:
+                    result["error"] = "Unknown error"
+
+            self.test_results.append(result)
+
+    @pytest.hookimpl(trylast=True)
+    def pytest_sessionfinish(self, session, exitstatus):
+        """Called after test session finishes."""
+        self.session_duration = time.time() - self.session_start_time
+
+    @pytest.hookimpl(trylast=True)
+    def pytest_terminal_summary(self, terminalreporter, exitstatus, config):
+        """Called to add custom summary to terminal report and save results to file."""
+        total = len(self.test_results)
+        passed = sum(1 for r in self.test_results if r["outcome"] == "passed")
+        failed = sum(1 for r in self.test_results if r["outcome"] == "failed")
+        skipped = sum(1 for r in self.test_results if r["outcome"] == "skipped")
+
+        failed_tests = [
+            {"name": r["name"], "error": r.get("error", "No error message")}
+            for r in self.test_results
+            if r["outcome"] == "failed"
+        ]
+
+        test_file = ""
+        if hasattr(config, "args") and config.args:
+            test_file = config.args[0] if config.args else "Unknown"
+
+        results_data = {
+            "timestamp": datetime.now().isoformat(),
+            "total": total,
+            "passed": passed,
+            "failed": failed,
+            "skipped": skipped,
+            "duration": self.session_duration,
+            "test_file": test_file,
+            "failed_tests": failed_tests,
+        }
+
+        success = self._save_results(results_data)
+
+        if success:
+            terminalreporter.write_line(
+                f"\nBenchmark results saved to {self.results_file}", green=True
+            )
+        else:
+            terminalreporter.write_line(
+                f"\nFailed to save benchmark results to {self.results_file}",
+                yellow=True,
+            )
+
+    def _save_results(self, results_data: dict[str, Any]) -> bool:
+        """
+        Save test results to a JSON file.
+
+        Args:
+            results_data: Dictionary containing test results
+
+        Returns:
+            bool: True if save was successful, False otherwise
+        """
+        try:
+            deepeval_dir = os.path.dirname(self.results_file)
+            os.makedirs(deepeval_dir, exist_ok=True)
+
+            with open(self.results_file, "w") as f:
+                json.dump(results_data, f, indent=2)
+
+            return True
+        except Exception as e:
+            print(f"Failed to save benchmark results: {e}")
+            return False
+
+
+def pytest_configure(config):
+    """Register the benchmark reporter plugin."""
+    if not hasattr(config, "slaveinput"):
+        reporter = BenchmarkReporter()
+        config.pluginmanager.register(reporter, "benchmark_reporter")
+
+
+def pytest_unconfigure(config):
+    """Unregister the benchmark reporter plugin."""
+    reporter = getattr(config, "benchmark_reporter", None)
+    if reporter:
+        config.pluginmanager.unregister(reporter)

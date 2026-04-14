@@ -1,0 +1,75 @@
+"""Tool registry for {{ project_name }}.
+
+Builds a single ``TOOL_REGISTRY`` dict mapping every declared tool name to its
+async callable.  Downstream nodes (planner solver, ReAct agent loop, etc.) resolve
+tools by string key from this registry rather than importing each module directly.
+
+Tool kinds aggregated here:
+{% if has_mcp %}- MCP tools  — via ``backend.services.mcp_client.get_mcp_tools``{% endif %}
+{% if has_http_tool %}- HTTP tools  — via ``backend.services.http_tool``{% endif %}
+{% if has_agent_tool %}- Agent tools — via ``backend.services.agent_tool``{% endif %}
+"""
+from __future__ import annotations
+
+from typing import Any, Callable
+
+{% if has_mcp %}
+from backend.services.mcp_client import get_mcp_tools
+{% endif %}
+{% if has_http_tool %}
+import backend.services.http_tool as _http_tools
+{% endif %}
+{% if has_agent_tool %}
+import backend.services.agent_tool as _agent_tools
+{% endif %}
+
+from backend.observability.logging import get_logger
+
+logger = get_logger("tool_registry")
+
+# Tool registry — populated at startup by build_tool_registry().
+# Keys are the tool names declared in project.yaml; values are async callables.
+TOOL_REGISTRY: dict[str, Callable[..., Any]] = {}
+
+
+async def build_tool_registry(auth_token: str | None = None) -> dict[str, Callable[..., Any]]:
+    """Build and return the full tool registry for this project.
+
+    Collects callables from all tool kinds (MCP, HTTP, agent) and returns a
+    unified mapping of ``tool_name -> async_callable``.
+
+    Args:
+        auth_token: Optional bearer token forwarded to MCP servers that require it.
+
+    Returns:
+        A dict mapping each declared tool name to its corresponding async callable.
+    """
+    registry: dict[str, Callable[..., Any]] = {}
+
+{% if has_mcp %}
+    # ── MCP tools ────────────────────────────────────────────────────────────
+    try:
+        mcp_tools = await get_mcp_tools(auth_token=auth_token)
+        for tool in mcp_tools:
+            registry[tool.name] = tool.arun
+            logger.debug("Registered MCP tool: %s", tool.name)
+    except Exception:
+        logger.exception("Failed to load MCP tools into registry")
+{% endif %}
+{% if has_http_tool %}
+    # ── HTTP tools ───────────────────────────────────────────────────────────
+{% for tool in http_tools %}
+    registry[{{ tool.name | tojson }}] = _http_tools.{{ tool.name }}
+    logger.debug("Registered HTTP tool: %s", {{ tool.name | tojson }})
+{% endfor %}
+{% endif %}
+{% if has_agent_tool %}
+    # ── Agent tools ──────────────────────────────────────────────────────────
+{% for tool in agent_tools %}
+    registry[{{ tool.name | tojson }}] = _agent_tools.{{ tool.name }}
+    logger.debug("Registered agent tool: %s", {{ tool.name | tojson }})
+{% endfor %}
+{% endif %}
+
+    logger.info("Tool registry built with %d tool(s): %s", len(registry), list(registry.keys()))
+    return registry

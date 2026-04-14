@@ -1,0 +1,186 @@
+# examples/assistant.yaml — Generic multi-intent conversational assistant.
+#
+# Pattern exercised: orchestrator (entry.type: intent_router, orchestrator.kind: llm)
+# Real-world use case: A customer-facing AI assistant that receives mixed user requests
+#   and routes them to one of three specialist agents based on detected intent.
+#   An LLM supervisor analyses each incoming request, determines the best agent, and
+#   dispatches accordingly — enabling natural multi-intent conversations without
+#   requiring callers to pre-classify their own requests.
+#
+# Opt-in features demonstrated:
+#   - entry.type: intent_router   (LLM-based request parsing + intent routing)
+#   - pattern: orchestrator       (supervisor-routed multi-agent topology)
+#   - orchestrator.kind: llm      (dynamic LLM routing — supervisor selects agent per request)
+#   - MCP tools (knowledge retrieval and ticket management via MCP server)
+#   - HTTP tool (live product catalogue and pricing API)
+#   - Langfuse observability tracing
+#   - API-key authentication
+
+metadata:
+  name: assistant
+  description: >
+    Generic multi-intent conversational assistant. An LLM supervisor analyses each
+    incoming request and routes it to one of three specialist agents: analytics_agent
+    (usage metrics and reporting), support_agent (issue resolution and ticket management),
+    or knowledge_agent (product documentation and FAQs). Demonstrates the orchestrator
+    pattern with dynamic LLM routing (orchestrator.kind: llm) across a classic three-intent
+    chat topology. Intent registry is driven by the valid_intents list derived from agent keys.
+  python_version: "3.12"
+  author: AgentForge Example
+  email: example@agentforge.dev
+
+entry:
+  type: intent_router
+
+pattern: orchestrator
+
+orchestrator:
+  kind: llm
+
+agents:
+  - key: analytics_agent
+    class_name: AnalyticsAgent
+    llm_model: gpt-4o-mini
+    system_prompt: |
+      You are a data analytics specialist. You answer questions about usage metrics,
+      trends, and reports. Your responsibilities:
+        1. Retrieve aggregated usage statistics via the get_usage_metrics tool.
+        2. Generate time-series trend summaries over configurable date windows.
+        3. Highlight anomalies (> 2 standard deviations from rolling average).
+        4. Present numbers in business-readable language — avoid raw SQL or JSON dumps.
+      Return a structured analytics result with: metric_name, period, value,
+      trend_direction (up/down/flat), and a one-sentence insight. Never expose
+      individual user data or PII in your response.
+    tools:
+      - kind: mcp
+        name: get_usage_metrics
+        description: Retrieve aggregated usage statistics for a given metric and date range
+        mcp_resource: get_usage_metrics
+      - kind: http
+        name: get_product_catalogue
+        description: >
+          Fetch the current product catalogue and pricing from the commerce API.
+          Used to enrich analytics responses with product context.
+        url: https://example.com/api/v1/products
+        method: GET
+        auth_env_var: COMMERCE_API_KEY
+        timeout_s: 10.0
+    needs_validation: false
+    extra_return_keys: ["metric_name", "period", "value", "trend_direction", "insight"]
+
+  - key: support_agent
+    class_name: SupportAgent
+    llm_model: gpt-4o-mini
+    system_prompt: |
+      You are a customer support specialist. You handle issue reports, answer support
+      questions, and manage support tickets. Your responsibilities:
+        1. Search the knowledge base for relevant troubleshooting steps or known issues.
+        2. Create or update support tickets via the ticket_manager tool when the user
+           reports a new problem or requests follow-up.
+        3. Escalate to human agents when the issue cannot be resolved automatically
+           (severity: high) or when the user requests it.
+        4. Always acknowledge the user's frustration before providing a solution.
+      Return a structured support response with: ticket_id (if created), resolution_status
+      (resolved/escalated/in_progress), next_steps (list), and an empathetic message.
+      Never reveal internal system details, error stack traces, or user data beyond
+      the current session.
+    tools:
+      - kind: mcp
+        name: search_knowledge_base
+        description: Full-text search across internal support documentation and known issue database
+        mcp_resource: search_knowledge_base
+      - kind: mcp
+        name: ticket_manager
+        description: Create, update, or retrieve support tickets for the current user session
+        mcp_resource: ticket_manager
+    needs_validation: false
+    extra_return_keys: ["ticket_id", "resolution_status", "next_steps"]
+
+  - key: knowledge_agent
+    class_name: KnowledgeAgent
+    llm_model: gpt-4o
+    system_prompt: |
+      You are a product knowledge specialist. You answer questions about product features,
+      documentation, integrations, and best practices. Your responsibilities:
+        1. Search the product documentation index for precise answers — always cite the
+           relevant documentation section in your response.
+        2. Fetch live product capability data from the product API when the user asks
+           about current feature availability, API limits, or pricing tiers.
+        3. Distinguish clearly between GA features, beta features, and roadmap items.
+           Never promise delivery dates for roadmap items.
+        4. If a question cannot be answered from documentation, direct the user to
+           the appropriate support channel.
+      Return a structured knowledge response with: answer, source_section, confidence
+      (high/medium/low), and related_topics (list of up to 3). Never invent features
+      or capabilities that do not exist in the documentation.
+    tools:
+      - kind: mcp
+        name: search_product_docs
+        description: Semantic search across product documentation, API reference, and release notes
+        mcp_resource: search_product_docs
+    needs_validation: false
+    extra_return_keys: ["answer", "source_section", "confidence", "related_topics"]
+
+database:
+  backend: postgres
+  tables:
+    - assistant_sessions
+    - intent_logs
+    - user_preferences
+  connection_env_var: DATABASE_URL
+  pool_size: 5
+  max_overflow: 10
+  use_alembic: false
+
+workflow:
+  enable_feedback_loop: true
+  enable_validation_node: false
+  router_llm_model: gpt-4o-mini
+  router_llm_provider: openai
+  default_intent: knowledge_agent
+  max_feedback_attempts: 2
+  enable_checkpointing: false
+
+api:
+  title: Multi-Intent Assistant API
+  query_max_length: 3000
+  endpoints:
+    - /chat
+    - /ask
+    - /status
+  cors:
+    origins:
+      - "https://app.example.com"
+      - "http://localhost:3000"
+    allow_credentials: false
+
+observability:
+  enable_tracing: true
+  tracing_provider: langfuse
+  context_fields:
+    - request_id
+    - session_id
+    - intent_type
+    - user_id
+  log_rotation_bytes: 10485760
+  log_backup_count: 5
+  structured_logging: false
+
+security:
+  auth_type: api_key
+  api_key_env_var: ASSISTANT_API_KEY
+  enable_ip_pseudonymization: true
+
+ci:
+  provider: github
+  python_version: "3.12"
+  installer: uv
+
+development:
+  pre_commit: true
+
+testing:
+  eval_framework: none
+  enable_benchmarks: false
+
+enable_provider_registry: false

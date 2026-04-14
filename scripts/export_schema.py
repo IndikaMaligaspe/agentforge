@@ -9,15 +9,26 @@ script and commit the result to fix it.
 """
 import json
 from pathlib import Path
-
-from agentforge.schema.models import ProjectConfig
+from typing import Any
 
 SCHEMA_PATH = Path("agentforge/schema/project.schema.json")
 
 
+def serialize_schema(config_class: Any) -> str:
+    """Return the canonical serialized JSON schema string for *config_class*.
+
+    This is the single source of truth for the serialization format used by
+    both the export script and the drift guard tests.  The returned string ends
+    with a trailing newline so it can be written directly to disk.
+    """
+    schema = config_class.model_json_schema()
+    return json.dumps(schema, indent=2) + "\n"
+
+
 def main() -> None:
-    schema = ProjectConfig.model_json_schema()
-    SCHEMA_PATH.write_text(json.dumps(schema, indent=2) + "\n")
+    from agentforge.schema.models import ProjectConfig
+
+    SCHEMA_PATH.write_text(serialize_schema(ProjectConfig))
     print(f"Schema written to {SCHEMA_PATH}")
 
 

@@ -15,15 +15,12 @@ from __future__ import annotations
 import ast
 import re
 import tempfile
-import warnings
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
-from agentforge.engine.renderer import TemplateRenderer
-from agentforge.schema.loader import load
-from agentforge.writer.scaffold import ScaffoldWriter
+from tests.e2e.conftest import FORBIDDEN_STRINGS, render_yaml_to_dict
 
 FULL_YAML = Path(__file__).parent.parent.parent / "examples" / "project.full.yaml"
 MINIMAL_YAML = Path(__file__).parent.parent / "fixtures" / "minimal.yaml"
@@ -93,8 +90,6 @@ EXPECTED_FILES = [
     "backend/graph/checkpointer.py",
 ]
 
-FORBIDDEN_STRINGS = ["madgicx", "slack", "webhook"]
-
 REQUIRED_REQUIREMENTS = [
     "pyjwt",
     "deepeval",
@@ -105,44 +100,16 @@ REQUIRED_REQUIREMENTS = [
 ]
 
 
-def _render_full(tmpdir: Path) -> dict[str, str]:
-    """Render examples/project.full.yaml into tmpdir, return {rel_path: content}."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)
-        cfg = load(FULL_YAML)
-    renderer = TemplateRenderer()
-    writer = ScaffoldWriter(root=tmpdir, overwrite=True)
-    rendered: dict[str, str] = {}
-    for rel_path, content in renderer.render_all(cfg):
-        writer.write(rel_path, content)
-        rendered[str(rel_path)] = content
-    return rendered
-
-
-def _render_yaml(yaml_path: Path, tmpdir: Path) -> dict[str, str]:
-    """Render an arbitrary yaml config into tmpdir, return {rel_path: content}."""
-    with warnings.catch_warnings():
-        warnings.simplefilter("ignore", UserWarning)
-        cfg = load(yaml_path)
-    renderer = TemplateRenderer()
-    writer = ScaffoldWriter(root=tmpdir, overwrite=True)
-    rendered: dict[str, str] = {}
-    for rel_path, content in renderer.render_all(cfg):
-        writer.write(rel_path, content)
-        rendered[str(rel_path)] = content
-    return rendered
-
-
 @pytest.fixture(scope="module")
 def scaffold() -> Iterator[dict[str, str]]:
     with tempfile.TemporaryDirectory(prefix="agentforge_e2e_") as tmpdir_str:
-        yield _render_full(Path(tmpdir_str))
+        yield render_yaml_to_dict(FULL_YAML, Path(tmpdir_str))
 
 
 @pytest.fixture(scope="module")
 def scaffold_no_mcp() -> Iterator[dict[str, str]]:
     with tempfile.TemporaryDirectory(prefix="agentforge_e2e_no_mcp_") as tmpdir_str:
-        yield _render_yaml(MINIMAL_YAML, Path(tmpdir_str))
+        yield render_yaml_to_dict(MINIMAL_YAML, Path(tmpdir_str))
 
 
 def test_expected_files_present(scaffold: dict[str, str]) -> None:

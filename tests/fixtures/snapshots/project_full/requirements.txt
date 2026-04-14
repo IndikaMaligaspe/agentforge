@@ -1,0 +1,46 @@
+# Core dependencies
+fastapi>=0.110.0
+uvicorn[standard]>=0.27.0
+pydantic>=2.7.0
+python-dotenv>=1.0.0
+
+# LangChain and LangGraph
+langchain>=0.1.0
+langchain-core>=0.1.0
+langgraph>=0.2
+langchain-openai>=0.1.0
+
+# LLM providers
+openai>=1.12.0
+langfuse>=2.0.0
+
+# Database drivers
+asyncpg>=0.29.0
+
+# Database migrations
+alembic>=1.13.0
+psycopg[binary]>=3.1.0
+
+# LangGraph checkpointing (requires PostgreSQL)
+langgraph-checkpoint-postgres>=1.0.0
+psycopg[binary,pool]>=3.1.0
+
+# Observability
+structlog>=24.1.0
+python-json-logger>=2.0.7
+
+# Security
+python-multipart>=0.0.7
+cryptography>=42.0.0
+# JWT authentication
+pyjwt[crypto]>=2.9.0,<3.0.0
+
+# MCP client — pinned to <0.2.0; see backend/services/mcp_client.py for upgrade notes
+langchain-mcp-adapters>=0.1.0,<0.2.0
+
+# Development tools
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+httpx>=0.26.0
+# DeepEval benchmark dependencies
+deepeval>=1.0.0,<3.0.0

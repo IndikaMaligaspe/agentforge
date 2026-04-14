@@ -1,0 +1,115 @@
+# tests/fixtures/campaign_health_v2.yaml
+#
+# Test-grade v2-native fixture for the Campaign Health Score topology.
+# Authored directly against the v2 schema — no legacy-compat shim required.
+#
+# Validates:
+#   - entry.type: intent_router   (explicit, not injected)
+#   - pattern: orchestrator       (explicit)
+#   - orchestrator.kind: rule     (pure Python dispatch, no supervisor LLM)
+#   - 4 CHS agents: campaign_scorer, insight_enricher, synthesizer, output_formatter
+#   - Mixed tool kinds: mcp + http
+#   - PostgreSQL backend with enable_checkpointing: true (AsyncPostgresSaver path)
+
+metadata:
+  name: campaign_health_v2
+  description: Campaign Health Score v2-native test fixture.
+  python_version: "3.12"
+  author: Test Fixture
+  email: test@example.com
+
+entry:
+  type: intent_router
+
+pattern: orchestrator
+
+orchestrator:
+  kind: rule
+
+agents:
+  - key: campaign_scorer
+    class_name: CampaignScorerAgent
+    llm_model: gpt-4o-mini
+    system_prompt: Score campaign metrics and return a health score.
+    tools:
+      - kind: mcp
+        name: fetch_campaign_metrics
+        description: Retrieve aggregated metrics for a campaign.
+        mcp_resource: fetch_campaign_metrics
+      - kind: http
+        name: get_account_benchmarks
+        description: Fetch account-level benchmarks from the metrics API.
+        url: https://example.com/api/v1/benchmarks
+        method: GET
+        auth_env_var: METRICS_API_KEY
+        timeout_s: 10.0
+    needs_validation: false
+    extra_return_keys: ["campaign_id", "health_score"]
+
+  - key: insight_enricher
+    class_name: InsightEnricherAgent
+    llm_model: gpt-4o-mini
+    system_prompt: Enrich scored campaigns with actionable recommendations.
+    tools:
+      - kind: mcp
+        name: get_creative_fatigue
+        description: Check creative fatigue score for an ad set.
+        mcp_resource: get_creative_fatigue
+    needs_validation: false
+    extra_return_keys: ["campaign_id", "recommendations"]
+
+  - key: synthesizer
+    class_name: SynthesizerAgent
+    llm_model: gpt-4o
+    system_prompt: Synthesize campaign results into an account health narrative.
+    tools:
+      - kind: mcp
+        name: compute_account_score
+        description: Aggregate campaign scores into an account-level score.
+        mcp_resource: compute_account_score
+    needs_validation: false
+    extra_return_keys: ["account_health_score", "narrative"]
+
+  - key: output_formatter
+    class_name: OutputFormatterAgent
+    llm_model: gpt-4o-mini
+    system_prompt: Format the synthesized health data for the caller intent.
+    tools:
+      - kind: mcp
+        name: render_health_widget
+        description: Render formatted HealthScoreWidget JSON.
+        mcp_resource: render_health_widget
+    needs_validation: false
+    extra_return_keys: ["formatted_output", "intent_type"]
+
+database:
+  backend: postgres
+  tables:
+    - campaigns
+    - campaign_metrics
+  connection_env_var: DATABASE_URL
+  pool_size: 5
+  max_overflow: 10
+  use_alembic: false
+
+workflow:
+  enable_feedback_loop: true
+  enable_validation_node: true
+  router_llm_model: gpt-4o-mini
+  router_llm_provider: openai
+  default_intent: campaign_scorer
+  max_feedback_attempts: 2
+  enable_checkpointing: true
+
+api:
+  title: Campaign Health Score v2 API
+  query_max_length: 2000
+
+security:
+  auth_type: api_key
+  api_key_env_var: CHS_API_KEY
+
+ci:
+  provider: github
+  python_version: "3.12"
+  installer: uv
