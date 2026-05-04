@@ -59,6 +59,18 @@ def verify_token(token: str) -> dict[str, Any]:
     except jwt.InvalidTokenError as exc:
         raise AuthError(f"Token is invalid: {exc}") from exc
 
+{% if structured_logging %}
+    try:
+        from structlog.contextvars import bind_contextvars
+
+        bind_contextvars(
+            user_id=payload.get("sub") or payload.get("user_id") or "anonymous",
+            team_id=payload.get("team_id", "default"),
+            request_id=payload.get("jti", ""),
+        )
+    except ImportError:
+        pass
+{% endif %}
     return payload
 
 {% else %}
@@ -102,5 +114,17 @@ def verify_token(token: str) -> dict[str, Any]:
     except jwt.InvalidTokenError as exc:
         raise AuthError(f"Token is invalid: {exc}") from exc
 
+{% if structured_logging %}
+    try:
+        from structlog.contextvars import bind_contextvars
+
+        bind_contextvars(
+            user_id=payload.get("sub") or payload.get("user_id") or "anonymous",
+            team_id=payload.get("team_id", "default"),
+            request_id=payload.get("jti", ""),
+        )
+    except ImportError:
+        pass
+{% endif %}
     return payload
 {% endif %}

@@ -1,13 +1,13 @@
 {
   "files": {
-    ".env.example": "b8a48ab69e6d67a476233c5b2b786484fdf10a51f95502235566550459fb8246",
+    ".env.example": "d6e6f5f4db630f5aabe14d1f1cab3ee21761227f65f638f5b2581953b769d4fd",
     ".github/workflows/ci.yml": "f9071909703cae64a358679b90c515be565e617e446b641869880739ede400a8",
     ".gitignore": "69c618ee9d7a7238904293e93fa83d7110ece268457ee8b8103f8c2d8b6208ae",
     ".gitleaks.toml": "8112ef3592b179257fb6205699f616a8e847cab57485e559ad837f4c32abdb60",
     ".pre-commit-config.yaml": "041fba184c0c790c949f3025c568145d16f3462626957a2b30ed957a99ad56af",
     ".secretscanignore": "f1dbce840767677814fff581cd7e6b9d9849bc1c34ed03ab7ac183261df3388e",
     "Makefile": "5240c22047d8f2928cdf60fd650bf131a0e2ad7214b1a7cebc8f651b9f3b9e31",
-    "README.md": "2af56356331d9e50a5108883774c8066e7e021f130aeab6b3e9f9cb778baf76b",
+    "README.md": "4d2413ada8ec32883599c9c2b9887b6d700911b0231f19c386794fc5c67b7136",
     "backend/__init__.py": "4f245e3dd612ae877948fdf7cb4050dc1cf0b4e3798652b0d103d4a711839b52",
     "backend/agents/__init__.py": "a4e72ad0fb8bb454a56948b098c7c9946ded12b425d87caed448907470a93b8b",
     "backend/agents/analytics_agent_agent.py": "528a90ec4e5002ecb13e36502b9f90940d6e141e458517f5296e413ce904d04d",

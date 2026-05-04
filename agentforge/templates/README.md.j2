@@ -108,6 +108,45 @@ Build and run with Docker Compose:
 docker-compose up -d
 ```
 
+## Environment Variables
+
+The scaffold reads configuration from `.env` (see `.env.example` for a starter file). Pydantic-Settings consumers auto-load it; bare `os.environ.get()` consumers need `make run` to forward the file via `--env-file .env`.
+
+| Variable | Purpose | Required | Default |
+|----------|---------|----------|---------|
+| `OPENAI_API_KEY` | LLM provider API key | Yes | — |
+| `{{ db_connection_env_var }}` | Database connection string | Yes | — |
+| `LOG_LEVEL` | Logging verbosity | No | `INFO` |
+| `LOG_FORMAT` | Log output format (`json` or `text`) | No | `json` |
+| `PORT` | HTTP listen port | No | `8000` |
+| `HOST` | HTTP bind address | No | `0.0.0.0` |
+| `WORKERS` | Uvicorn worker count | No | `1` |
+| `RELOAD` | Dev-server auto-reload | No | `true` |
+{% if security.enable_auth and security.auth_type == "api_key" %}
+| `{{ security.api_key_env_var }}` | API key for protected endpoints | Yes | — |
+{% endif %}
+{% if auth_type == "jwt" and jwt_algorithm == "HS256" %}
+| `JWT_SECRET` | HS256 JWT signing secret | Yes | — |
+{% endif %}
+{% if auth_type == "jwt" and jwt_issuer %}
+| `JWT_ISSUER` | Expected JWT issuer claim | Yes | — |
+{% endif %}
+{% if auth_type == "jwt" and jwt_audience %}
+| `JWT_AUDIENCE` | Expected JWT audience claim | Yes | — |
+{% endif %}
+{% if observability.enable_tracing %}
+{% if observability.tracing_provider == "langfuse" %}
+| `LANGFUSE_HOST` | Langfuse server URL | No | `https://cloud.langfuse.com` |
+| `LANGFUSE_PUBLIC_KEY` | Langfuse public key | Yes | — |
+| `LANGFUSE_SECRET_KEY` | Langfuse secret key | Yes | — |
+| `LANGFUSE_PROJECT` | Langfuse project name | Yes | — |
+{% endif %}
+{% endif %}
+{% if has_mcp %}
+| `MCP_SERVERS` | JSON map of MCP server URLs (commented in `.env.example`) | No | — |
+| `MCP_TIMEOUT` | MCP request timeout (seconds) | No | `30` |
+{% endif %}
+
 ## API Endpoints
 
 {% for endpoint in api.endpoints %}

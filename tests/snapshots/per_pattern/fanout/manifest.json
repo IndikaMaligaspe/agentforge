@@ -1,12 +1,12 @@
 {
   "files": {
-    ".env.example": "f77e4f9c953c468e678245398697d27db91f606d7f5c6bfa9f7d5774716f6f35",
+    ".env.example": "f03e7d7b2f4e336d93849d7b32c1d076cacc3462a26d7052a35528ea6033cf03",
     ".github/workflows/ci.yml": "f9071909703cae64a358679b90c515be565e617e446b641869880739ede400a8",
     ".gitignore": "69c618ee9d7a7238904293e93fa83d7110ece268457ee8b8103f8c2d8b6208ae",
     ".gitleaks.toml": "8112ef3592b179257fb6205699f616a8e847cab57485e559ad837f4c32abdb60",
     ".secretscanignore": "f1dbce840767677814fff581cd7e6b9d9849bc1c34ed03ab7ac183261df3388e",
     "Makefile": "5240c22047d8f2928cdf60fd650bf131a0e2ad7214b1a7cebc8f651b9f3b9e31",
-    "README.md": "428a83de2086b59f288145b6cb78ccc79ba45dc3ffba2a5d82c4bb8a3c7e5a57",
+    "README.md": "c080fec1891cf132e7154a6de3cf3219c580e7f3cf51d541b109bf21c4da18bc",
     "backend/__init__.py": "4f245e3dd612ae877948fdf7cb4050dc1cf0b4e3798652b0d103d4a711839b52",
     "backend/agents/__init__.py": "a4e72ad0fb8bb454a56948b098c7c9946ded12b425d87caed448907470a93b8b",
     "backend/agents/audience_analyzer_agent.py": "7991982aae1e9d98a5874e4c27440e4e74f45f7515574bc8c6e019cb33a20a17",
