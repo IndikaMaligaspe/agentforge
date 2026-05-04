@@ -1,0 +1,20 @@
+title = "agentforge gitleaks config"
+
+# This config lives at the repo root so the local pre-commit hook running
+# `gitleaks protect --staged` picks it up. It uses gitleaks's built-in
+# ruleset and adds path-based allowlisting for known false positives.
+#
+# Note: this is the AgentForge tool's own config. The template
+# `agentforge/templates/.gitleaks.toml.j2` is scaffolded into projects
+# generated *by* AgentForge — it is intentionally separate from this file.
+
+[allowlist]
+description = "AgentForge snapshot fixtures and per-pattern manifest hashes"
+paths = [
+    # SHA-256 hashes of rendered template files trigger the generic-api-key
+    # rule on every regenerated manifest.
+    '''tests/snapshots/per_pattern/.*/manifest\.json''',
+    # Rendered scaffold output used as golden-tree fixtures. May include
+    # generated .env.example files with placeholder values.
+    '''tests/fixtures/snapshots/.*''',
+]
