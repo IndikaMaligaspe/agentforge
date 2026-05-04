@@ -640,9 +640,9 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
     ("security/auth_init.py.j2",      "backend/security/__init__.py",
      lambda c: c.security.auth_type == "jwt"),
     ("__init__.py.j2",                "backend/config/__init__.py",
-     lambda c: c.enable_provider_registry or c.workflow.enable_checkpointing),
+     lambda c: c.enable_provider_registry or c.workflow.enable_checkpointing or c.enable_settings_module or c.multi_tenancy.enabled),
     ("__init__.py.j2",                "backend/services/__init__.py",
-     lambda c: _has_mcp(c) or _has_any_tool(c) or _has_stores(c)),
+     lambda c: _has_mcp(c) or _has_any_tool(c) or c.multi_tenancy.enabled or _has_stores(c)),
     ("__init__.py.j2",                "backend/tests/__init__.py",
      lambda c: c.observability.structured_logging),
     # ── Static (per-project) templates ────────────────────────────────────────
@@ -744,6 +744,25 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
      lambda c: c.workflow.enable_checkpointing),
     ("config/memory_settings.py.j2",     "backend/config/memory_settings.py",
      lambda c: c.workflow.enable_checkpointing),
+    # ── Typed settings module scaffold ───────────────────────────────────────
+    # Generated only when enable_settings_module=True OR multi_tenancy.enabled=True.
+    # Multi-tenancy implicitly requires the Settings module (platform-DB DSN assembly,
+    # SecretStr-typed credential keys, .env auto-load, empty-string-rejecting validators).
+    ("config/settings.py.j2",          "backend/config/settings.py",
+     lambda c: c.enable_settings_module or c.multi_tenancy.enabled),
+    # ── Multi-tenancy scaffold (TODO-L7..L11) ────────────────────────────────────
+    # credential_provider.py: Protocol + env/db implementations + factory function.
+    # Gated on multi_tenancy.enabled (always emitted when multi-tenancy is on).
+    ("services/credential_provider.py.j2", "backend/services/credential_provider.py",
+     lambda c: c.multi_tenancy.enabled),
+    # platform_db.py: asyncpg connection-pool helper for per-tenant DB lookups.
+    # Only emitted when credential_provider == "db" (env provider does not need it).
+    ("services/platform_db.py.j2", "backend/services/platform_db.py",
+     lambda c: c.multi_tenancy.enabled and c.multi_tenancy.credential_provider == "db"),
+    # account_gate.py: FastAPI dependency that validates X-Account-Id header against
+    # the credential store and injects the resolved account into the request state.
+    ("middleware/account_gate.py.j2", "backend/middleware/account_gate.py",
+     lambda c: c.multi_tenancy.enabled),
     # ── JWT auth scaffold ─────────────────────────────────────────────────────
     ("security/jwt.py.j2",           "backend/security/jwt.py",
      lambda c: c.security.auth_type == "jwt"),

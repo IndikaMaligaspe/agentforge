@@ -1,0 +1,160 @@
+"""Strongly-typed application settings for {{ project_name }}.
+
+Pydantic-Settings auto-loads ``.env`` (see ``model_config`` below). For bare
+``os.environ.get()`` consumers in modules that import at runtime (JWT secrets
+read at module-import time, etc.), the Makefile passes ``--env-file .env`` to
+``uv run`` so they see the same values.
+
+Required SecretStr fields reject ``""``. To opt out of a field, omit it from
+``.env`` entirely; do not set it to an empty string.
+"""
+from typing import Optional
+
+{% if multi_tenancy.enabled -%}
+from pydantic import Field, SecretStr, field_validator, model_validator
+{% else -%}
+from pydantic import Field, SecretStr, field_validator
+{% endif %}
+from pydantic_settings import BaseSettings, SettingsConfigDict
+
+
+class Settings(BaseSettings):
+    """Strongly-typed application settings.
+
+    Pydantic-Settings auto-loads `.env` (see `model_config` below). For bare
+    `os.environ.get()` consumers in modules that import at runtime (JWT
+    secrets read at module-import time, etc.), the Makefile passes
+    `--env-file .env` to `uv run` so they see the same values.
+
+    Required SecretStr fields reject `""`. To opt out of a field, omit it
+    from `.env` entirely; do not set it to an empty string.
+    """
+
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore",
+    )
+
+    # === LLM provider keys ===
+    openai_api_key: SecretStr = Field(...)
+
+    # === Database ===
+    {{ db_connection_env_var | lower }}: str = Field(...)
+
+    # === Logging ===
+    log_level: str = Field(default="INFO")
+    log_format: str = Field(default="json")
+
+    # === Server ===
+    port: int = Field(default=8000)
+    host: str = Field(default="0.0.0.0")
+    workers: int = Field(default=1)
+    reload: bool = Field(default=True)
+
+    # === Authentication ===
+{% if security.enable_auth and security.auth_type == "api_key" %}
+    {{ security.api_key_env_var | lower }}: SecretStr = Field(...)
+{% endif %}
+{% if auth_type == "jwt" and jwt_algorithm == "HS256" %}
+    jwt_secret: SecretStr = Field(...)
+{% endif %}
+{% if auth_type == "jwt" and jwt_issuer %}
+    jwt_issuer: str = Field(...)
+{% endif %}
+{% if auth_type == "jwt" and jwt_audience %}
+    jwt_audience: str = Field(...)
+{% endif %}
+
+    # === Observability / tracing ===
+{% if observability.enable_tracing %}
+{% if observability.tracing_provider == "langfuse" %}
+    langfuse_host: str = Field(default="https://cloud.langfuse.com")
+    langfuse_public_key: SecretStr = Field(...)
+    langfuse_secret_key: SecretStr = Field(...)
+    langfuse_project: str = Field(...)
+{% endif %}
+{% endif %}
+{% if multi_tenancy.enabled %}
+
+    # === Platform DB (multi-tenancy) ===
+    platform_db_host: Optional[str] = Field(default=None)
+    platform_db_user: Optional[str] = Field(default=None)
+    platform_db_password: Optional[SecretStr] = Field(default=None)
+    platform_db_port: int = Field(default=5432)
+    platform_db_name: Optional[str] = Field(default=None)
+    platform_db_url: Optional[str] = Field(default=None)
+    credential_provider: str = Field(default="{{ multi_tenancy.credential_provider }}")
+{% endif %}
+
+    @field_validator(
+        "openai_api_key",
+{% if security.enable_auth and security.auth_type == "api_key" %}
+        "{{ security.api_key_env_var | lower }}",
+{% endif %}
+{% if auth_type == "jwt" and jwt_algorithm == "HS256" %}
+        "jwt_secret",
+{% endif %}
+{% if observability.enable_tracing %}
+{% if observability.tracing_provider == "langfuse" %}
+        "langfuse_public_key",
+        "langfuse_secret_key",
+{% endif %}
+{% endif %}
+{% if multi_tenancy.enabled %}
+        "platform_db_password",
+{% endif %}
+        mode="before",
+    )
+    @classmethod
+    def _reject_empty_secret(cls, v: str | SecretStr, info) -> str | SecretStr:
+        """Reject "" — it bypasses required-field validation otherwise.
+
+        SecretStr accepts empty strings as valid; we want loud failure on
+        empty values for fields that should never be blank. Project owners
+        who want to opt out of a field should omit it from `.env` entirely.
+        """
+        raw = v.get_secret_value() if isinstance(v, SecretStr) else v
+        if raw == "":
+            raise ValueError(
+                f"{info.field_name} must not be empty; omit the key or "
+                "provide a real value."
+            )
+        return v
+{% if multi_tenancy.enabled %}
+
+    @model_validator(mode="after")
+    def _assemble_platform_db_url(self) -> "Settings":
+        """Build platform_db_url from PLATFORM_DB_* parts when not set explicitly.
+
+        Skipped entirely if `platform_db_url` is set or if assembled-DSN mode is
+        disabled (multi_tenancy.platform_db_assembled_dsn=False — set the env var).
+
+        URL-encodes user/password to handle special characters (@, :, /, #).
+        Leaves `platform_db_url` as None if any part is missing — downstream
+        code is expected to handle that case, since multi-tenancy may be
+        enabled but credential storage may stay env-based for some deployments.
+        """
+        if self.platform_db_url:
+            return self
+{% if multi_tenancy.platform_db_assembled_dsn %}
+        from urllib.parse import quote_plus
+
+        parts = (
+            self.platform_db_host,
+            self.platform_db_user,
+            self.platform_db_password,
+            self.platform_db_name,
+        )
+        if not all(parts):
+            return self
+
+        encoded_user = quote_plus(self.platform_db_user)
+        encoded_password = quote_plus(self.platform_db_password.get_secret_value())
+        self.platform_db_url = (
+            f"postgresql://{encoded_user}:{encoded_password}"
+            f"@{self.platform_db_host}:{self.platform_db_port}/{self.platform_db_name}"
+        )
+{% endif %}
+        return self
+{% endif %}

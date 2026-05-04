@@ -32,6 +32,10 @@ pyodbc>=5.0.0
 {% elif db_backend == "bigquery" %}
 google-cloud-bigquery>=3.14.0
 {% endif %}
+{% if multi_tenancy.enabled and multi_tenancy.credential_provider == "db" %}
+# Multi-tenancy / platform DB
+asyncpg>=0.29.0,<0.31.0
+{% endif %}
 {% if db_use_alembic %}
 
 # Database migrations

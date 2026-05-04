@@ -24,6 +24,7 @@ The schema is organized hierarchically:
     - CORSConfig (CORS settings)
   - ObservabilityConfig (logging and tracing)
   - SecurityConfig (auth and sanitization)
+  - MultiTenancyConfig (multi-tenancy scaffold options)
   - CiConfig (CI provider settings)
   - DevelopmentConfig (local development tooling)
   - TestingConfig (eval framework and benchmark options)
@@ -400,6 +401,46 @@ class SecurityConfig(BaseModel):
     def enable_auth(self) -> bool:
         """True when auth is active (api_key or jwt). Kept for template backwards compat."""
         return self.auth_type != "none"
+
+
+class MultiTenancyConfig(BaseModel):
+    """Multi-tenancy configuration block.
+
+    Off by default. When enabled, the scaffold emits:
+      - platform_db.py (asyncpg pool helper) — TODO-5.5
+      - credential_provider.py (Protocol + env/db impls + factory) — TODO-5.6
+      - account_gate.py (FastAPI dependency) — TODO-5.7
+      - settings.py (forced on) with platform-DB DSN assembly — TODO-5.4 / 5.8
+
+    Items 1-4 must ship together as a unit; selecting `enabled=True` without
+    them produces a half-built scaffold. The umbrella flag prevents that.
+    """
+
+    enabled: bool = Field(default=False)
+    credential_provider: Literal["env", "db"] = Field(
+        default="env",
+        description=(
+            "How tenant credentials are stored. 'env' reads from `.env` (Phase-1 "
+            "single-tenant). 'db' uses an asyncpg connection to a platform DB "
+            "with a per-tenant lookup."
+        ),
+    )
+    account_scoping_header: str = Field(
+        default="X-Account-Id",
+        description=(
+            "HTTP header that carries the active account id for tenant-scoped "
+            "requests. The account_gate middleware reads this header and "
+            "validates against the tenant's allowed accounts."
+        ),
+    )
+    platform_db_assembled_dsn: bool = Field(
+        default=True,
+        description=(
+            "When True (default), Settings.platform_db_url is assembled from "
+            "PLATFORM_DB_HOST/USER/PW/PORT/NAME parts (with URL-encoding). "
+            "When False, the explicit PLATFORM_DB_URL env var must be set."
+        ),
+    )
 
 
 class CiConfig(BaseModel):
@@ -827,6 +868,7 @@ class ProjectConfig(BaseModel):
       enable_benchmarks: true       # default: false (opt-in)
 
     enable_provider_registry: false  # default; set true to generate backend/config/provider_registry.py
+    enable_settings_module: false    # default; set true to emit backend/config/settings.py
 
     # v2 fields (optional — omitted in legacy configs):
     entry:
@@ -872,6 +914,7 @@ class ProjectConfig(BaseModel):
     api: APIConfig = Field(default_factory=lambda: APIConfig())  # type: ignore[call-arg]
     observability: ObservabilityConfig = Field(default_factory=lambda: ObservabilityConfig())  # type: ignore[call-arg]
     security: SecurityConfig = Field(default_factory=lambda: SecurityConfig())  # type: ignore[call-arg]
+    multi_tenancy: MultiTenancyConfig = Field(default_factory=MultiTenancyConfig)
     ci: CiConfig = Field(default_factory=lambda: CiConfig())  # type: ignore[call-arg]
     development: DevelopmentConfig = Field(default_factory=lambda: DevelopmentConfig())  # type: ignore[call-arg]
     testing: TestingConfig = Field(default_factory=lambda: TestingConfig())  # type: ignore[call-arg]
@@ -886,6 +929,16 @@ class ProjectConfig(BaseModel):
             "`backend/services/{name}_store.py` module via the store_backend "
             "macro. Empty by default (preserves byte-identity for existing "
             "project.yaml files)."
+        ),
+    )
+    enable_settings_module: bool = Field(
+        default=False,
+        description=(
+            "Emit a typed Pydantic-Settings module at backend/config/settings.py "
+            "with SecretStr-typed keys, .env auto-load, and empty-string-rejecting "
+            "validators. Off by default to preserve existing scattered "
+            "os.environ.get() patterns; opt in for projects adopting the new "
+            "convention."
         ),
     )
 
@@ -1143,5 +1196,24 @@ class ProjectConfig(BaseModel):
             raise ValueError(
                 f"orchestrator config is set but pattern='{self.pattern}'. "
                 f"Set pattern='orchestrator' or remove the orchestrator sub-config."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _warn_multi_tenancy_without_jwt(self) -> "ProjectConfig":
+        """Warn when multi_tenancy.enabled=True but auth_type != 'jwt'.
+
+        Anonymous tenants without JWT means credential_provider has no user
+        context to scope by. This is likely a misconfiguration in production
+        (though may be intentional for testing). We warn, never raise.
+        """
+        if self.multi_tenancy.enabled and self.security.auth_type != "jwt":
+            warnings.warn(
+                "multi_tenancy.enabled=True with auth_type != 'jwt' means "
+                "anonymous tenants — credential_provider has no user context "
+                "to scope by. This may be intentional for testing but is rarely "
+                "what you want in production.",
+                UserWarning,
+                stacklevel=2,
             )
         return self
