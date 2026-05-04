@@ -29,6 +29,7 @@
     "backend/mcp_server.py": "c33ccf8bc51582b9fb428364dc316c3d16813b6c00e1588c4acc73f7762eed9b",
     "backend/middleware/__init__.py": "4f245e3dd612ae877948fdf7cb4050dc1cf0b4e3798652b0d103d4a711839b52",
     "backend/middleware/logging_middleware.py": "10f31e003c7a595d806b32181b5ef317ba793376b8e9de51bed4feab0428eb2d",
+    "backend/middleware/permission_gate.py": "623dc78f8d9e0f9e52c62f71f2a4aa977cb7738e74a16abd9c58108bd5f9fcf0",
     "backend/migrations/env.py": "5781099617f4305a3db0b1f5363e45cd0ef6928440d784a245f048c2060050eb",
     "backend/migrations/script.py.mako": "1cd95fdba048d71bd02a3894a239e3d7904fad551f555afcd483a096225ff377",
     "backend/observability/__init__.py": "4f245e3dd612ae877948fdf7cb4050dc1cf0b4e3798652b0d103d4a711839b52",

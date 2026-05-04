@@ -71,3 +71,19 @@ def test_structured_logging_off_renders_stdlib_template():
     assert test_file_key not in files, (
         f"Expected {test_file_key!r} to be absent from rendered output when structured_logging=False"
     )
+
+
+def test_structlog_has_redact_secrets_processor():
+    """Redaction infrastructure must be present in the structlog-rendered logging.py."""
+    base = load(FIXTURES_DIR / "full.yaml")
+    new_obs = base.observability.model_copy(update={"structured_logging": True})
+    config = base.model_copy(update={"observability": new_obs})
+
+    files = _render_dict(config)
+    logging_py = files["backend/observability/logging.py"]
+
+    assert "redact_secrets" in logging_py
+    assert "_SECRET_FIELD_PATTERN" in logging_py
+    assert "_SECRET_SAFELIST" in logging_py
+    assert "[REDACTED]" in logging_py
+    ast.parse(logging_py)  # raises SyntaxError if invalid

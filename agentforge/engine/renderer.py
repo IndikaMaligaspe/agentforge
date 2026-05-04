@@ -705,6 +705,11 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
      lambda c: c.security.auth_type == "jwt"),
     ("security/jwt_settings.py.j2",  "backend/security/jwt_settings.py",
      lambda c: c.security.auth_type == "jwt"),
+    ("middleware/permission_gate.py.j2", "backend/middleware/permission_gate.py",
+     lambda c: c.security.auth_type == "jwt"),
+    # ── Prompt secret scanner scaffold ───────────────────────────────────────
+    ("security/prompt_secret_scanner.py.j2", "backend/security/prompt_secret_scanner.py",
+     lambda c: c.security.enable_prompt_secret_scan),
     # ── DeepEval benchmark scaffold ───────────────────────────────────────────
     # All entries gated on enable_benchmarks=True AND eval_framework="deepeval".
     # Output under backend/tests/benchmarks/ — mirrors the test layout expected

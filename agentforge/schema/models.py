@@ -346,6 +346,24 @@ class SecurityConfig(BaseModel):
         None,
         description="JWKS endpoint URL. Required when jwt_algorithm='RS256'.",
     )
+    enable_prompt_secret_scan: bool = Field(
+        default=False,
+        description=(
+            "Emit prompt_secret_scanner.py module that LLM call sites can use to "
+            "guard against accidentally including secrets in prompts. Pattern list is "
+            "append-only — projects extend it; do not replace."
+        ),
+    )
+    permission_key: str = Field(
+        default="__placeholder_permission",
+        description=(
+            "Default permission claim key for the permission_gate middleware. "
+            "Production projects should override this with the project-specific "
+            "key (e.g. 'app:read'). The placeholder value emits a one-time "
+            "warning at module-import time so deployments can't accidentally "
+            "ship the default."
+        ),
+    )
 
     @model_validator(mode="before")
     @classmethod
