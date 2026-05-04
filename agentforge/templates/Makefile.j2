@@ -6,8 +6,12 @@ help: ## Show available targets
 install: ## Install project dependencies
 	uv sync --extra dev
 
+# --env-file .env is required so that bare os.environ.get() consumers (e.g. JWT
+# secrets read at module-import time) see .env values. pydantic-settings loads
+# .env automatically, but os.environ does not — omitting this flag causes 401s
+# on every request.
 run: ## Start the API server
-	uv run uvicorn backend.main:app --reload
+	uv run --env-file .env uvicorn backend.main:app --reload
 
 test: ## Run the test suite
 	uv run pytest -v
