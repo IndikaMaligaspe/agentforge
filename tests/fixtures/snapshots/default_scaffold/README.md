@@ -102,6 +102,28 @@ Build and run with Docker Compose:
 docker-compose up -d
 ```
 
+## Environment Variables
+
+The scaffold reads configuration from `.env` (see `.env.example` for a starter file). Pydantic-Settings consumers auto-load it; bare `os.environ.get()` consumers need `make run` to forward the file via `--env-file .env`.
+
+| Variable | Purpose | Required | Default |
+|----------|---------|----------|---------|
+| `OPENAI_API_KEY` | LLM provider API key | Yes | — |
+| `DATABASE_URL` | Database connection string | Yes | — |
+| `LOG_LEVEL` | Logging verbosity | No | `INFO` |
+| `LOG_FORMAT` | Log output format (`json` or `text`) | No | `json` |
+| `PORT` | HTTP listen port | No | `8000` |
+| `HOST` | HTTP bind address | No | `0.0.0.0` |
+| `WORKERS` | Uvicorn worker count | No | `1` |
+| `RELOAD` | Dev-server auto-reload | No | `true` |
+| `API_SECRET_KEY` | API key for protected endpoints | Yes | — |
+| `LANGFUSE_HOST` | Langfuse server URL | No | `https://cloud.langfuse.com` |
+| `LANGFUSE_PUBLIC_KEY` | Langfuse public key | Yes | — |
+| `LANGFUSE_SECRET_KEY` | Langfuse secret key | Yes | — |
+| `LANGFUSE_PROJECT` | Langfuse project name | Yes | — |
+| `MCP_SERVERS` | JSON map of MCP server URLs (commented in `.env.example`) | No | — |
+| `MCP_TIMEOUT` | MCP request timeout (seconds) | No | `30` |
+
 ## API Endpoints
 
 - `POST /query`: Main query endpoint
