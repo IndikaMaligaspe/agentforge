@@ -1,0 +1,115 @@
+"""FastAPI dependency factory for protecting routes by required permission claim.
+
+This module provides ``require_permission``, a factory that returns a FastAPI
+async dependency.  The dependency verifies the incoming JWT and then enforces
+that the decoded claims contain the requested permission.
+
+Substring-bypass guard
+----------------------
+``claims["permissions"]`` MUST be a list; string permissions are rejected.
+If the claim arrives as a plain string (e.g. ``"admin"``), naive membership
+testing with ``in`` would allow substring matches (``"adm" in "admin"`` is
+``True``).  This module rejects non-list shapes with HTTP 403 before any
+membership test is performed.
+"""
+from __future__ import annotations
+
+import warnings
+from typing import Any
+
+from fastapi import HTTPException, Request, status
+
+from backend.security.jwt import verify_token
+
+# ---------------------------------------------------------------------------
+# Module-level constant — injected by the AgentForge renderer.
+# ---------------------------------------------------------------------------
+
+PERMISSION_KEY: str = "{{ security.permission_key }}"
+
+# Warn at import time when the rendered value is still the generator
+# placeholder so developers remember to configure a real permission name.
+_PLACEHOLDER = "__placeholder_permission"
+if PERMISSION_KEY == _PLACEHOLDER:
+    warnings.warn(
+        f"permission_gate: PERMISSION_KEY is still the placeholder value "
+        f"'{_PLACEHOLDER}'. Set security.permission_key in your project.yaml "
+        f"before deploying to production.",
+        stacklevel=1,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Dependency factory
+# ---------------------------------------------------------------------------
+
+def require_permission(required_permission: str):
+    """Return a FastAPI dependency that enforces ``required_permission`` is in
+    the JWT's permissions claim.
+
+    Critical: claims["permissions"] MUST be a list.  A string would allow
+    substring bypass (e.g., "admin" in "administrator" is True), so we
+    reject non-list shapes with HTTP 403.
+
+    Parameters
+    ----------
+    required_permission:
+        The exact permission string that the caller's JWT must contain.
+
+    Returns
+    -------
+    Callable
+        An async FastAPI dependency that, on success, returns the full claims
+        dict from the verified JWT.
+
+    Raises
+    ------
+    HTTPException 401:
+        When the ``Authorization`` header is missing or malformed.
+    HTTPException 403:
+        When the ``permissions`` claim is not a list, or when
+        ``required_permission`` is not present in the list.
+    """
+
+    async def dependency(request: Request) -> dict[str, Any]:
+        # Extract the Bearer token from the Authorization header.
+        auth_header: str | None = request.headers.get("Authorization")
+        if not auth_header or not auth_header.startswith("Bearer "):
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Missing or malformed Authorization header. Expected: Bearer <token>",
+                headers={"WWW-Authenticate": "Bearer"},
+            )
+
+        token: str = auth_header[len("Bearer "):]
+
+        # verify_token raises backend.security.dtos.AuthError on failure.
+        # Re-raise as HTTP 401 so FastAPI surfaces a structured response.
+        try:
+            claims: dict[str, Any] = verify_token(token)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail=f"Token verification failed: {exc}",
+                headers={"WWW-Authenticate": "Bearer"},
+            ) from exc
+
+        # --- Substring-bypass guard -------------------------------------------
+        # Reject the claim if it is not a list.  A string claim must NOT be
+        # iterated for membership because "adm" in "admin" is True.
+        raw = claims.get("permissions")
+        if not isinstance(raw, list):
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="permissions claim must be a list",
+            )
+
+        if required_permission not in raw:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail=f"Missing required permission: {required_permission}",
+            )
+
+        return claims
+
+    return dependency

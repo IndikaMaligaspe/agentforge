@@ -759,6 +759,18 @@
           "default": null,
           "description": "JWKS endpoint URL. Required when jwt_algorithm='RS256'.",
           "title": "Jwks Url"
+        },
+        "enable_prompt_secret_scan": {
+          "default": false,
+          "description": "Emit prompt_secret_scanner.py module that LLM call sites can use to guard against accidentally including secrets in prompts. Pattern list is append-only \u2014 projects extend it; do not replace.",
+          "title": "Enable Prompt Secret Scan",
+          "type": "boolean"
+        },
+        "permission_key": {
+          "default": "__placeholder_permission",
+          "description": "Default permission claim key for the permission_gate middleware. Production projects should override this with the project-specific key (e.g. 'app:read'). The placeholder value emits a one-time warning at module-import time so deployments can't accidentally ship the default.",
+          "title": "Permission Key",
+          "type": "string"
         }
       },
       "title": "SecurityConfig",

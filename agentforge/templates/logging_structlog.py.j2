@@ -15,6 +15,7 @@ Public API:
 
 import logging
 import os
+import re
 import sys
 import time
 import uuid
@@ -44,6 +45,36 @@ DEFAULT_LOG_LEVEL = LOG_LEVELS.get(ENV, logging.INFO)
 
 _configured = False
 
+# ---------------------------------------------------------------------------
+# Secret redaction
+# ---------------------------------------------------------------------------
+_SECRET_FIELD_PATTERN = re.compile(
+    r"token|secret|key|password|auth|credential|bearer",
+    re.IGNORECASE,
+)
+_SECRET_SAFELIST: set[str] = {
+    "langfuse_public_key",
+    "public_key",
+    "api_version",
+    "key_id",
+}
+
+
+def redact_secrets(logger, method_name, event_dict):
+    """Replace values whose key name suggests a secret with '[REDACTED]'.
+
+    Keys matching {_SECRET_FIELD_PATTERN.pattern!r} are redacted, except
+    those explicitly listed in `_SECRET_SAFELIST`. Project owners may
+    extend the safelist as needed; the pattern itself is intentionally
+    broad — false positives are preferable to leaks.
+    """
+    for k in list(event_dict.keys()):
+        if k in _SECRET_SAFELIST:
+            continue
+        if _SECRET_FIELD_PATTERN.search(k):
+            event_dict[k] = "[REDACTED]"
+    return event_dict
+
 
 def configure_logging(log_level: Optional[int] = None) -> None:
     """Configure structlog + stdlib root logger. Call once at app startup."""
@@ -61,6 +92,7 @@ def configure_logging(log_level: Optional[int] = None) -> None:
         structlog.stdlib.add_logger_name,
         structlog.processors.TimeStamper(fmt="iso", utc=True),
         structlog.processors.StackInfoRenderer(),
+        redact_secrets,
         structlog.processors.format_exc_info,
     ]
 
