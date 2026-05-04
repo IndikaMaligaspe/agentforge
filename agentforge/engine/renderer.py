@@ -636,6 +636,11 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
     ("env.j2",                      ".env.example"),
     ("README.md.j2",                "README.md"),
     ("gitignore.j2",                ".gitignore"),
+    # ── Secret-scanning scaffold ──────────────────────────────────────────────
+    # Always rendered (unconditional 2-tuple) — every project gets a gitleaks
+    # config and a GitHub secret-scanning ignore list regardless of feature flags.
+    (".gitleaks.toml.j2",           ".gitleaks.toml"),
+    (".secretscanignore.j2",        ".secretscanignore"),
     # ── Makefile scaffold ─────────────────────────────────────────────────────────
     ("Makefile.j2",                  "Makefile"),
     ("provider_registry.py.j2",     "backend/config/provider_registry.py",
@@ -655,6 +660,9 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
     # ── Pre-commit hooks scaffold ─────────────────────────────────────────────
     ("precommit_config.yaml.j2",     ".pre-commit-config.yaml",
      lambda c: c.development.pre_commit),
+    # ── Type-checking config scaffold ────────────────────────────────────────
+    ("pyrightconfig.json.j2",         "pyrightconfig.json",
+     lambda c: c.development.type_checking == "pyright"),
     # ── MCP client scaffold ───────────────────────────────────────────────────
     ("mcp_client.py.j2",             "backend/services/mcp_client.py",
      _has_mcp),

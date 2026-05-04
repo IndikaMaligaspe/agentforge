@@ -411,6 +411,14 @@ class CiConfig(BaseModel):
 class DevelopmentConfig(BaseModel):
     """Local development tooling scaffold options."""
     pre_commit: bool = Field(False, description="Generate .pre-commit-config.yaml with ruff and common hooks")
+    type_checking: Literal["none", "pyright", "mypy"] = Field(
+        default="none",
+        description=(
+            "Type checker to scaffold a config for. 'pyright' emits "
+            "pyrightconfig.json. 'mypy' is reserved for a future template. "
+            "'none' (default) emits nothing — preserves existing scaffolds."
+        ),
+    )
 
 
 class TestingConfig(BaseModel):
