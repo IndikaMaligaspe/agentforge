@@ -290,6 +290,17 @@
           "description": "Generate .pre-commit-config.yaml with ruff and common hooks",
           "title": "Pre Commit",
           "type": "boolean"
+        },
+        "type_checking": {
+          "default": "none",
+          "description": "Type checker to scaffold a config for. 'pyright' emits pyrightconfig.json. 'mypy' is reserved for a future template. 'none' (default) emits nothing \u2014 preserves existing scaffolds.",
+          "enum": [
+            "none",
+            "pyright",
+            "mypy"
+          ],
+          "title": "Type Checking",
+          "type": "string"
         }
       },
       "title": "DevelopmentConfig",

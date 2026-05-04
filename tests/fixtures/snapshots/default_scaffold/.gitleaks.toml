@@ -1,0 +1,14 @@
+title = "gitleaks config"
+
+# Project-specific allowlist. Add false-positive paths or rules here.
+# See https://github.com/gitleaks/gitleaks for the full rules grammar.
+
+[allowlist]
+description = "Project allowlist"
+paths = [
+    ".env.example",
+    "tests/fixtures/",
+]
+# regexes = [
+#     '''<inline allowlisted secret pattern>''',
+# ]
