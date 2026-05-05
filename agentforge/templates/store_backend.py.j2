@@ -1,0 +1,194 @@
+{#-
+  store_backend.py.j2 — rendered ONCE PER StoreSpec by the renderer's per-spec loop.
+
+  Jinja context (per render):
+    store.name     — snake_case store name, e.g. "audit_log"
+    store.backends — list of backend names, e.g. ["memory", "bigquery"]
+    store.default  — default backend name, e.g. "memory"
+
+  Filters available (registered in agentforge/engine/renderer.py):
+    pascal_case  — "audit_log" -> "AuditLog"
+    upper_snake  — "audit_log" -> "AUDIT_LOG"
+-#}
+{%- set NAME = store.name | pascal_case -%}
+{%- set NAME_UPPER = store.name | upper_snake -%}
+"""Generated {{ store.name }}_store module.
+
+Provides a Protocol-based abstraction for {{ store.name }} CRUD with
+per-backend implementations. Project owners customize InMemory{{ NAME }}Store
+as the dev default and override the others with real persistence.
+
+Backend selection: {{ NAME_UPPER }}_STORE_BACKEND env var, default "{{ store.default }}".
+"""
+
+from __future__ import annotations
+
+from typing import Optional, Protocol, runtime_checkable
+
+from pydantic import BaseModel
+{% if "bigquery" in store.backends %}
+from backend.services.bigquery_rest_client import BigQueryRestClient
+{% endif %}
+{% if "postgres" in store.backends %}
+import asyncpg
+{% endif %}
+
+if False:  # TYPE_CHECKING
+    from backend.config.settings import Settings
+
+
+class {{ NAME }}Record(BaseModel):
+    """A single {{ store.name }} record. Project owners extend with typed fields."""
+
+    id: str
+    # Add typed fields here, e.g.:
+    #   created_at: datetime
+    #   payload: dict[str, Any]
+
+
+@runtime_checkable
+class {{ NAME }}Store(Protocol):
+    """CRUD interface for {{ store.name }} records."""
+
+    async def get(self, record_id: str) -> Optional[{{ NAME }}Record]:
+        """Return the record by id, or None if absent."""
+        ...
+
+    async def put(self, record: {{ NAME }}Record) -> None:
+        """Insert or upsert the record."""
+        ...
+
+    async def delete(self, record_id: str) -> None:
+        """Remove the record. No-op if it doesn't exist."""
+        ...
+
+    async def list(self, limit: int = 100) -> list[{{ NAME }}Record]:
+        """Return up to `limit` records (no defined ordering by default)."""
+        ...
+
+
+class InMemory{{ NAME }}Store:
+    """In-process store. The dev default — never use in production.
+
+    Useful for tests and single-process deployments. State is per-process
+    and lost on restart.
+    """
+
+    def __init__(self) -> None:
+        self._records: dict[str, {{ NAME }}Record] = {}
+
+    async def get(self, record_id: str) -> Optional[{{ NAME }}Record]:
+        return self._records.get(record_id)
+
+    async def put(self, record: {{ NAME }}Record) -> None:
+        self._records[record.id] = record
+
+    async def delete(self, record_id: str) -> None:
+        self._records.pop(record_id, None)
+
+    async def list(self, limit: int = 100) -> list[{{ NAME }}Record]:
+        return list(self._records.values())[:limit]
+
+{% if "bigquery" in store.backends %}
+
+class BigQuery{{ NAME }}Store:
+    """BigQuery-backed store. Project-specific schema must be filled in.
+
+    Uses the thin REST client (google-auth + httpx) — not the full
+    google-cloud-bigquery SDK. Override `_table_schema` and `_dataset`
+    with your project's values.
+    """
+
+    _dataset: str = "REPLACE_WITH_DATASET"
+    _table: str = "{{ store.name }}"
+    _table_schema: list[dict[str, str]] = [
+        {"name": "id", "type": "STRING", "mode": "REQUIRED"},
+        # Add fields matching {{ NAME }}Record.
+    ]
+
+    def __init__(self, client: BigQueryRestClient) -> None:
+        self._client = client
+
+    async def get(self, record_id: str) -> Optional[{{ NAME }}Record]:
+        raise NotImplementedError(
+            "Override BigQuery{{ NAME }}Store.get with your project's query"
+        )
+
+    async def put(self, record: {{ NAME }}Record) -> None:
+        raise NotImplementedError(
+            "Override BigQuery{{ NAME }}Store.put with your project's insert"
+        )
+
+    async def delete(self, record_id: str) -> None:
+        raise NotImplementedError(
+            "Override BigQuery{{ NAME }}Store.delete; BigQuery streaming "
+            "inserts cannot be deleted within the buffer window — projects "
+            "typically tombstone instead"
+        )
+
+    async def list(self, limit: int = 100) -> list[{{ NAME }}Record]:
+        raise NotImplementedError(
+            "Override BigQuery{{ NAME }}Store.list with your project's query"
+        )
+{% endif %}
+
+{% if "postgres" in store.backends %}
+
+class Postgres{{ NAME }}Store:
+    """Postgres-backed store. Project must provide schema + queries.
+
+    Stub — every method raises NotImplementedError so a deployment can't
+    accidentally start with no real persistence.
+    """
+
+    def __init__(self, pool: asyncpg.Pool) -> None:
+        self._pool = pool
+
+    async def get(self, record_id: str) -> Optional[{{ NAME }}Record]:
+        raise NotImplementedError(
+            "Override Postgres{{ NAME }}Store.get with your project's query"
+        )
+
+    async def put(self, record: {{ NAME }}Record) -> None:
+        raise NotImplementedError(
+            "Override Postgres{{ NAME }}Store.put with your project's upsert"
+        )
+
+    async def delete(self, record_id: str) -> None:
+        raise NotImplementedError(
+            "Override Postgres{{ NAME }}Store.delete with your project's query"
+        )
+
+    async def list(self, limit: int = 100) -> list[{{ NAME }}Record]:
+        raise NotImplementedError(
+            "Override Postgres{{ NAME }}Store.list with your project's query"
+        )
+{% endif %}
+
+
+def build_{{ store.name }}_store(settings: "Settings") -> {{ NAME }}Store:
+    """Factory: select a store impl based on settings.{{ store.name }}_store_backend.
+
+    Default: "{{ store.default }}" (set via {{ NAME_UPPER }}_STORE_BACKEND env var).
+    """
+    backend = getattr(settings, "{{ store.name }}_store_backend", "{{ store.default }}")
+{% if "bigquery" in store.backends %}
+    if backend == "bigquery":
+        from backend.services.bigquery_rest_client import BigQueryRestClient
+        # Construct your client with the relevant credentials/project_id.
+        return BigQuery{{ NAME }}Store(client=BigQueryRestClient())  # noqa: needs project args
+{% endif %}
+{% if "postgres" in store.backends %}
+    if backend == "postgres":
+        # Wire your asyncpg pool here — typically via app.state.db_pool.
+        raise RuntimeError(
+            "Postgres{{ NAME }}Store factory must be wired with an asyncpg "
+            "Pool. Override this factory or pass the pool explicitly."
+        )
+{% endif %}
+    if backend == "memory":
+        return InMemory{{ NAME }}Store()
+    raise ValueError(
+        f"Unknown {{ store.name }}_store_backend: {backend!r}. "
+        "Expected one of: {{ store.backends | join(', ') }}."
+    )

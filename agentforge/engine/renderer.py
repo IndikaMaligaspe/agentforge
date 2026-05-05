@@ -181,6 +181,21 @@ def _is_intent_router_entry(c: ProjectConfig) -> bool:
     return c.entry is None or c.entry.type == "intent_router"
 
 
+def _has_stores(c: ProjectConfig) -> bool:
+    """True when the project declares at least one store (TODO-L12)."""
+    return bool(c.stores)
+
+
+def _has_bigquery_store(c: ProjectConfig) -> bool:
+    """True if any declared StoreSpec lists 'bigquery' in its backends."""
+    return any("bigquery" in store.backends for store in c.stores)
+
+
+def _has_postgres_store(c: ProjectConfig) -> bool:
+    """True if any declared StoreSpec lists 'postgres' in its backends."""
+    return any("postgres" in store.backends for store in c.stores)
+
+
 def _make_env(pattern: str) -> Environment:
     """
     Build a Jinja2 Environment with a ``ChoiceLoader`` for the given pattern.
@@ -281,7 +296,7 @@ class TemplateRenderer:
 
         This method renders all templates needed for a complete project scaffold,
         including both static templates (rendered once per project) and dynamic
-        templates (rendered for each agent).
+        templates (rendered for each agent and each declared store).
 
         Args:
             config: The validated ProjectConfig containing all project settings
@@ -319,6 +334,14 @@ class TemplateRenderer:
             agent_ctx = {**ctx, "agent": agent.model_dump()}
             content = self._render(env, "agent.py.j2", agent_ctx)
             results.append((Path(f"backend/agents/{agent.key}_agent.py"), content))
+
+        # Dynamic (per-store) templates — TODO-L12
+        # One output file per StoreSpec: backend/services/{name}_store.py
+        # Empty stores list → loop body never executes → no new files emitted.
+        for store in config.stores:
+            store_ctx = {**ctx, "store": store.model_dump()}
+            content = self._render(env, "store_backend.py.j2", store_ctx)
+            results.append((Path(f"backend/services/{store.name}_store.py"), content))
 
         return results
 
@@ -488,6 +511,11 @@ class TemplateRenderer:
         data["testing_eval_framework"]      = config.testing.eval_framework
         # Top-level feature flags
         data["enable_provider_registry"]    = config.enable_provider_registry
+        # Store specs alias — TODO-L12
+        # Serialised list of StoreSpec dicts; fed to store_backend.py.j2 by the
+        # dynamic per-store loop. Empty by default (preserves byte-identity for all
+        # existing configs).
+        data["stores"]                      = [s.model_dump() for s in config.stores]
         # ReAct pattern aliases — expose ReactConfig fields to templates so no
         # numeric or string literals need to be hardcoded inside the .j2 files.
         # These are always populated (ReactConfig has defaults), but are only
@@ -552,6 +580,11 @@ class TemplateRenderer:
             for tool in agent.tools
         )
         data["has_any_tool"] = _has_http_tool(config) or _has_agent_tool(config)
+        # Computed flag: true when any StoreSpec has 'bigquery' in its backends.
+        # Used to gate bigquery_rest_client.py.j2 in STATIC_TEMPLATE_MAP and the
+        # conditional google-auth pin in requirements.txt.j2.
+        data["has_bigquery_store"] = _has_bigquery_store(config)
+        data["has_postgres_store"] = _has_postgres_store(config)
         # Typed tool lists — passed to http_tool.py.j2, agent_tool.py.j2, and
         # tool_registry.py.j2 so that templates iterate over only their kind.
         # Use mode="json" so AnyHttpUrl (and other Pydantic types) are serialized
@@ -609,7 +642,7 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
     ("__init__.py.j2",                "backend/config/__init__.py",
      lambda c: c.enable_provider_registry or c.workflow.enable_checkpointing),
     ("__init__.py.j2",                "backend/services/__init__.py",
-     lambda c: _has_mcp(c) or _has_any_tool(c)),
+     lambda c: _has_mcp(c) or _has_any_tool(c) or _has_stores(c)),
     ("__init__.py.j2",                "backend/tests/__init__.py",
      lambda c: c.observability.structured_logging),
     # ── Static (per-project) templates ────────────────────────────────────────
@@ -681,6 +714,11 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
     # Central dict keyed by tool name used by all downstream nodes.
     ("tools/tool_registry.py.j2",    "backend/services/tool_registry.py",
      _has_any_tool),
+    # ── BigQuery REST client scaffold ─────────────────────────────────────────
+    # Emitted only when at least one StoreSpec has "bigquery" in its backends.
+    # Uses google-auth + httpx (NOT google-cloud-bigquery) for a lean dep tree.
+    ("services/bigquery_rest_client.py.j2", "backend/services/bigquery_rest_client.py",
+     _has_bigquery_store),
     # ── ReAct pattern: compiled graph-app factory ────────────────────────────
     # Rendered only when pattern == "react".  The template lives under
     # patterns/react/ and is picked up by the ChoiceLoader automatically; it

@@ -19,6 +19,7 @@ The schema is organized hierarchically:
   - FanoutConfig (per-pattern config for fanout pattern — v2)
   - OrchestratorConfig (per-pattern config for orchestrator pattern — v2)
   - PlannerConfig (per-pattern config for planner pattern — v2)
+  - StoreSpec (one store kind to scaffold — v2)
   - APIConfig (FastAPI settings)
     - CORSConfig (CORS settings)
   - ObservabilityConfig (logging and tracing)
@@ -721,6 +722,51 @@ class PlannerConfig(BaseModel):
     )
 
 
+class StoreSpec(BaseModel):
+    """Declarative spec for a store kind that gets a CRUD scaffold.
+
+    Each spec produces a generated module at backend/services/{name}_store.py
+    containing a Protocol, in-memory impl, optional BigQuery/Postgres impls,
+    and a build_{name}_store(settings) factory.
+
+    Projects extend the InMemory impl as the dev default and swap in a real
+    backend via the {NAME}_STORE_BACKEND env var.
+    """
+
+    name: SlugStr = Field(
+        ...,
+        description=(
+            "Store name in snake_case (must match ^[a-z][a-z0-9_]*$). "
+            "Becomes the file name (`backend/services/{name}_store.py`) "
+            "and the env-var prefix (`{NAME}_STORE_BACKEND`)."
+        ),
+    )
+    backends: list[Literal["memory", "bigquery", "postgres"]] = Field(
+        default_factory=lambda: ["memory"],
+        description=(
+            "Which backends the store template emits. 'memory' is always "
+            "available (the in-process default). 'bigquery' and 'postgres' "
+            "are optional — the generated factory selects on the env var."
+        ),
+    )
+    default: Literal["memory", "bigquery", "postgres"] = Field(
+        default="memory",
+        description=(
+            "Backend selected when the *_STORE_BACKEND env var is unset. "
+            "Must be present in `backends`."
+        ),
+    )
+
+    @model_validator(mode="after")
+    def _default_must_be_in_backends(self) -> "StoreSpec":
+        if self.default not in self.backends:
+            raise ValueError(
+                f"StoreSpec(name={self.name!r}).default={self.default!r} "
+                f"must be in backends={self.backends!r}"
+            )
+        return self
+
+
 # ── Root model ────────────────────────────────────────────────────────────────
 
 class ProjectConfig(BaseModel):
@@ -832,6 +878,15 @@ class ProjectConfig(BaseModel):
     enable_provider_registry: bool = Field(
         False,
         description="Generate backend/config/provider_registry.py in the scaffolded project.",
+    )
+    stores: list[StoreSpec] = Field(
+        default_factory=list,
+        description=(
+            "List of store kinds to scaffold. Each entry produces a "
+            "`backend/services/{name}_store.py` module via the store_backend "
+            "macro. Empty by default (preserves byte-identity for existing "
+            "project.yaml files)."
+        ),
     )
 
     # ── backwards-compat validator ─────────────────────────────────────────────
@@ -1045,6 +1100,27 @@ class ProjectConfig(BaseModel):
             raise ValueError(
                 f"agents contains duplicate key(s): {dupes}. "
                 f"Each agent key must be unique (used as LangGraph node name)."
+            )
+        return self
+
+    @model_validator(mode="after")
+    def _validate_store_names_unique(self) -> "ProjectConfig":
+        """
+        Enforce that every store name is unique within the project.
+
+        Store names are used as the output file name for each generated store
+        module (backend/services/{name}_store.py). Duplicate names would cause
+        a silent file overwrite when the writer emits the second store.
+
+        Raises:
+            ValueError: If any store name appears more than once in stores.
+        """
+        names = [s.name for s in self.stores]
+        dupes = sorted({n for n in names if names.count(n) > 1})
+        if dupes:
+            raise ValueError(
+                f"stores contains duplicate name(s): {dupes}. "
+                "Each store name must be unique (used as the output file name)."
             )
         return self
 
