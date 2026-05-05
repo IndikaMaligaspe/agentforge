@@ -1,7 +1,7 @@
 """
 tests/test_render_per_pattern.py — Per-pattern render + compile + snapshot tests.
 
-For each of the 6 example YAML fixtures introduced in TODO-v2-9:
+For each of the 5 example YAML fixtures:
   1. Load the config via schema.loader.load().
   2. Render via TemplateRenderer into an in-memory dict {rel_path: content}.
   3. compile() every .py file — stricter than ast.parse(); catches syntax errors
@@ -40,10 +40,9 @@ _EXAMPLES_DIR: Path = Path(__file__).parent.parent / "examples"
 # Snapshot root for this test suite.
 _SNAPSHOT_ROOT: Path = Path(__file__).parent / "snapshots" / "per_pattern"
 
-# The 6 example files from TODO-v2-9.  project.full.yaml is intentionally
+# The 5 example files.  project.full.yaml is intentionally
 # excluded — it is governed by tests/test_scaffold_snapshot.py.
 _EXAMPLE_FILES = [
-    "campaign_health.yaml",
     "assistant.yaml",
     "copilot.yaml",
     "planner.yaml",
@@ -51,7 +50,7 @@ _EXAMPLE_FILES = [
     "workflow.yaml",
 ]
 
-# Bare name used as directory key and test ID, e.g. "campaign_health".
+# Bare name used as directory key and test ID, e.g. "copilot".
 _EXAMPLE_IDS = [Path(f).stem for f in _EXAMPLE_FILES]
 
 
@@ -78,7 +77,7 @@ def _compute_manifest(rendered: dict[str, str]) -> dict[str, str]:
 
 
 def _manifest_path(name: str) -> Path:
-    """Return the manifest JSON path for *name* (bare stem, e.g. 'campaign_health')."""
+    """Return the manifest JSON path for *name* (bare stem, e.g. 'copilot')."""
     return _SNAPSHOT_ROOT / name / "manifest.json"
 
 
