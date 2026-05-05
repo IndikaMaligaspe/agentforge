@@ -51,6 +51,13 @@ class Settings(BaseSettings):
     host: str = Field(default="0.0.0.0")
     workers: int = Field(default=1)
     reload: bool = Field(default=True)
+{% if stores %}
+
+    # === Store backend selection (auto-generated from stores list) ===
+{% for store in stores %}
+    {{ store.name }}_store_backend: str = Field(default="{{ store.default }}")
+{% endfor %}
+{% endif %}
 
     # === Authentication ===
 {% if security.enable_auth and security.auth_type == "api_key" %}

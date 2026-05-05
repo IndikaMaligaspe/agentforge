@@ -640,7 +640,7 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
     ("security/auth_init.py.j2",      "backend/security/__init__.py",
      lambda c: c.security.auth_type == "jwt"),
     ("__init__.py.j2",                "backend/config/__init__.py",
-     lambda c: c.enable_provider_registry or c.workflow.enable_checkpointing or c.enable_settings_module or c.multi_tenancy.enabled),
+     lambda c: c.enable_provider_registry or c.workflow.enable_checkpointing or c.enable_settings_module or c.multi_tenancy.enabled or _has_stores(c)),
     ("__init__.py.j2",                "backend/services/__init__.py",
      lambda c: _has_mcp(c) or _has_any_tool(c) or c.multi_tenancy.enabled or _has_stores(c)),
     ("__init__.py.j2",                "backend/tests/__init__.py",
@@ -749,7 +749,7 @@ STATIC_TEMPLATE_MAP: list[TemplateMapEntry] = [
     # Multi-tenancy implicitly requires the Settings module (platform-DB DSN assembly,
     # SecretStr-typed credential keys, .env auto-load, empty-string-rejecting validators).
     ("config/settings.py.j2",          "backend/config/settings.py",
-     lambda c: c.enable_settings_module or c.multi_tenancy.enabled),
+     lambda c: c.enable_settings_module or c.multi_tenancy.enabled or _has_stores(c)),
     # ── Multi-tenancy scaffold (TODO-L7..L11) ────────────────────────────────────
     # credential_provider.py: Protocol + env/db implementations + factory function.
     # Gated on multi_tenancy.enabled (always emitted when multi-tenancy is on).
