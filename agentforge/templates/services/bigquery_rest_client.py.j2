@@ -1,0 +1,188 @@
+"""Thin BigQuery REST client using google-auth + httpx.
+
+Deliberately NOT using `google-cloud-bigquery` — that package's transitive
+dependency tree is very heavy. Projects that need the full client SDK can
+swap this implementation; the StoreSpec-generated stores in this scaffold
+only use the small subset implemented here:
+
+  * insert_rows_async — streaming inserts via tabledata.insertAll
+  * query_async — query job submission + result polling
+  * _ensure_table_exists_async — idempotent table creation
+
+Authentication uses the default Application Default Credentials chain
+(GOOGLE_APPLICATION_CREDENTIALS or attached service account).
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+from typing import Any, Optional
+
+import httpx
+from google.auth import default as google_auth_default
+from google.auth.transport.requests import Request as GoogleAuthRequest
+
+
+_BIGQUERY_SCOPE = "https://www.googleapis.com/auth/bigquery"
+_API_ROOT = "https://bigquery.googleapis.com/bigquery/v2"
+
+
+def build_table_ddl(table_id: str, schema: list[dict[str, str]]) -> dict[str, Any]:
+    """Build the JSON body for a tables.insert call.
+
+    `schema` is a list of {"name": ..., "type": ..., "mode": ...} dicts
+    matching BigQuery's schema field format.
+    """
+    return {
+        "tableReference": {"tableId": table_id},
+        "schema": {"fields": schema},
+    }
+
+
+class BigQueryRestClient:
+    """Single-process BigQuery REST client.
+
+    Token caching, table-existence caching, and HTTP connection reuse are
+    all per-instance. Reuse one client across the app; tests should
+    construct a fresh instance.
+    """
+
+    def __init__(
+        self,
+        project_id: str,
+        *,
+        timeout: float = 30.0,
+    ) -> None:
+        self._project_id = project_id
+        self._timeout = timeout
+        self._credentials, _ = google_auth_default(scopes=[_BIGQUERY_SCOPE])
+        self._table_ensured: set[str] = set()
+        self._client: Optional[httpx.AsyncClient] = None
+
+    async def __aenter__(self) -> "BigQueryRestClient":
+        self._client = httpx.AsyncClient(timeout=self._timeout)
+        return self
+
+    async def __aexit__(self, *args: Any) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+    def _refresh_token(self) -> str:
+        """Refresh credentials and return the access token. Synchronous —
+        google-auth's default flow doesn't expose async refresh. Cheap enough
+        to not bother offloading to a thread."""
+        if not self._credentials.valid:
+            self._credentials.refresh(GoogleAuthRequest())
+        return self._credentials.token
+
+    def _headers(self) -> dict[str, str]:
+        return {
+            "Authorization": f"Bearer {self._refresh_token()}",
+            "Content-Type": "application/json",
+        }
+
+    def _client_or_raise(self) -> httpx.AsyncClient:
+        if self._client is None:
+            raise RuntimeError(
+                "BigQueryRestClient must be used as an async context manager "
+                "or have its httpx client wired explicitly"
+            )
+        return self._client
+
+    async def _ensure_table_exists_async(
+        self,
+        dataset_id: str,
+        table_id: str,
+        schema: list[dict[str, str]],
+    ) -> None:
+        """Create the table if it doesn't exist. Idempotent + cached.
+
+        Cache key is `f"{dataset_id}.{table_id}"`. Once a table is confirmed
+        existing (or created) within the lifetime of this client instance,
+        further calls return immediately.
+        """
+        cache_key = f"{dataset_id}.{table_id}"
+        if cache_key in self._table_ensured:
+            return
+
+        client = self._client_or_raise()
+        url = (
+            f"{_API_ROOT}/projects/{self._project_id}"
+            f"/datasets/{dataset_id}/tables"
+        )
+        body = build_table_ddl(table_id, schema)
+        resp = await client.post(url, headers=self._headers(), json=body)
+
+        if resp.status_code == 409:
+            # Already exists — fine.
+            self._table_ensured.add(cache_key)
+            return
+        if 200 <= resp.status_code < 300:
+            self._table_ensured.add(cache_key)
+            return
+        raise RuntimeError(
+            f"BigQuery table create failed: {resp.status_code} {resp.text}"
+        )
+
+    async def insert_rows_async(
+        self,
+        dataset_id: str,
+        table_id: str,
+        rows: list[dict[str, Any]],
+    ) -> None:
+        """Streaming insert via tabledata.insertAll.
+
+        Note: streaming-inserted rows have a buffer window during which they
+        are NOT deletable via DELETE statements. Plan accordingly.
+        """
+        client = self._client_or_raise()
+        url = (
+            f"{_API_ROOT}/projects/{self._project_id}"
+            f"/datasets/{dataset_id}/tables/{table_id}/insertAll"
+        )
+        body = {"rows": [{"json": r} for r in rows]}
+        resp = await client.post(url, headers=self._headers(), json=body)
+        if resp.status_code >= 300:
+            raise RuntimeError(
+                f"BigQuery insert failed: {resp.status_code} {resp.text}"
+            )
+        result = resp.json()
+        if "insertErrors" in result:
+            raise RuntimeError(
+                f"BigQuery insert reported row-level errors: {result['insertErrors']}"
+            )
+
+    async def query_async(
+        self,
+        sql: str,
+        *,
+        timeout_ms: int = 30000,
+    ) -> list[dict[str, Any]]:
+        """Submit a query job and return rows as dicts.
+
+        Uses the synchronous-style `jobs.query` endpoint which submits and
+        waits up to `timeout_ms`. For longer queries, use the jobs.insert /
+        jobs.getQueryResults pair (not implemented here).
+        """
+        client = self._client_or_raise()
+        url = f"{_API_ROOT}/projects/{self._project_id}/queries"
+        body = {"query": sql, "timeoutMs": timeout_ms, "useLegacySql": False}
+        resp = await client.post(url, headers=self._headers(), json=body)
+        if resp.status_code >= 300:
+            raise RuntimeError(
+                f"BigQuery query failed: {resp.status_code} {resp.text}"
+            )
+        payload = resp.json()
+        if not payload.get("jobComplete", False):
+            raise RuntimeError(
+                f"BigQuery query did not complete within {timeout_ms}ms"
+            )
+        # Map { rows: [ { f: [ { v: val } ] } ] } to list[dict] using the schema fields.
+        schema_fields = payload.get("schema", {}).get("fields", [])
+        names = [f["name"] for f in schema_fields]
+        return [
+            {name: cell.get("v") for name, cell in zip(names, row.get("f", []))}
+            for row in payload.get("rows", [])
+        ]

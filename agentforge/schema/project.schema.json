@@ -811,6 +811,48 @@
       "title": "StepConfig",
       "type": "object"
     },
+    "StoreSpec": {
+      "description": "Declarative spec for a store kind that gets a CRUD scaffold.\n\nEach spec produces a generated module at backend/services/{name}_store.py\ncontaining a Protocol, in-memory impl, optional BigQuery/Postgres impls,\nand a build_{name}_store(settings) factory.\n\nProjects extend the InMemory impl as the dev default and swap in a real\nbackend via the {NAME}_STORE_BACKEND env var.",
+      "properties": {
+        "name": {
+          "description": "Store name in snake_case (must match ^[a-z][a-z0-9_]*$). Becomes the file name (`backend/services/{name}_store.py`) and the env-var prefix (`{NAME}_STORE_BACKEND`).",
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[a-z][a-z0-9_]*$",
+          "title": "Name",
+          "type": "string"
+        },
+        "backends": {
+          "description": "Which backends the store template emits. 'memory' is always available (the in-process default). 'bigquery' and 'postgres' are optional \u2014 the generated factory selects on the env var.",
+          "items": {
+            "enum": [
+              "memory",
+              "bigquery",
+              "postgres"
+            ],
+            "type": "string"
+          },
+          "title": "Backends",
+          "type": "array"
+        },
+        "default": {
+          "enum": [
+            "memory",
+            "bigquery",
+            "postgres"
+          ],
+          "type": "string",
+          "default": "memory",
+          "description": "Backend selected when the *_STORE_BACKEND env var is unset. Must be present in `backends`.",
+          "title": "Default"
+        }
+      },
+      "required": [
+        "name"
+      ],
+      "title": "StoreSpec",
+      "type": "object"
+    },
     "TestingConfig": {
       "description": "Opt-in evaluation framework and benchmark scaffold options.",
       "properties": {
@@ -1045,6 +1087,14 @@
       "description": "Generate backend/config/provider_registry.py in the scaffolded project.",
       "title": "Enable Provider Registry",
       "type": "boolean"
+    },
+    "stores": {
+      "description": "List of store kinds to scaffold. Each entry produces a `backend/services/{name}_store.py` module via the store_backend macro. Empty by default (preserves byte-identity for existing project.yaml files).",
+      "items": {
+        "$ref": "#/$defs/StoreSpec"
+      },
+      "title": "Stores",
+      "type": "array"
     }
   },
   "required": [

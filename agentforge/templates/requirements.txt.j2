@@ -70,6 +70,16 @@ langchain-mcp-adapters>=0.1.0,<0.2.0
 # HTTP client — required by http_tool and/or agent_tool service modules
 httpx>=0.26.0
 {% endif %}
+{% if has_bigquery_store %}
+
+# BigQuery REST client (google-auth + httpx; NOT google-cloud-bigquery)
+google-auth>=2.0.0,<3.0.0
+{% endif %}
+{% if has_postgres_store and db_backend != "postgres" %}
+
+# asyncpg required by store backend with postgres impl
+asyncpg>=0.29.0,<0.31.0
+{% endif %}
 
 # Development tools
 pytest>=8.0.0
