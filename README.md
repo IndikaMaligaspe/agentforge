@@ -121,8 +121,10 @@ For a project named `my_agent_api` with agents `sql` and `analytics`:
 
 ```
 my_agent_api/                          ← scaffolded output
-├── .env.example
+├── .env.example                       ← sectioned with === HEADER === blocks
 ├── .gitignore
+├── .gitleaks.toml                     ← always generated; secret-scan rules
+├── .secretscanignore                  ← always generated; per-file exclusions
 ├── README.md
 ├── requirements.txt
 │
@@ -137,6 +139,9 @@ my_agent_api/                          ← scaffolded output
     │   ├── sql_agent.py               ← rendered from agent.py.j2
     │   └── analytics_agent.py         ← rendered from agent.py.j2
     │
+    ├── config/
+    │   └── settings.py                ← if enable_settings_module OR multi_tenancy.enabled OR stores declared
+    │
     ├── graph/
     │   ├── __init__.py
     │   ├── state.py                   ← AgentState TypedDict
@@ -149,19 +154,28 @@ my_agent_api/                          ← scaffolded output
     │       ├── validation_node.py     ← only if enable_validation_node=True
     │       └── feedback_node.py       ← only if enable_feedback_loop=True
     │
+    ├── middleware/
+    │   ├── __init__.py
+    │   ├── logging_middleware.py
+    │   ├── permission_gate.py         ← if security.auth_type == "jwt"
+    │   └── account_gate.py            ← if multi_tenancy.enabled
+    │
     ├── observability/
     │   ├── __init__.py
     │   ├── logging.py
     │   └── tracing.py
     │
-    ├── middleware/
+    ├── security/
     │   ├── __init__.py
-    │   └── logging_middleware.py
+    │   ├── auth.py
+    │   ├── sanitizer.py
+    │   └── prompt_secret_scanner.py   ← if security.enable_prompt_secret_scan
     │
-    └── security/
-        ├── __init__.py
-        ├── auth.py
-        └── sanitizer.py
+    └── services/
+        ├── credential_provider.py     ← if multi_tenancy.enabled
+        ├── platform_db.py             ← if multi_tenancy.enabled AND credential_provider == "db"
+        ├── bigquery_rest_client.py    ← if any store declares "bigquery" backend
+        └── {name}_store.py            ← one file per declared StoreSpec
 ```
 
 ## Configuration Reference
@@ -222,6 +236,21 @@ security:
   enable_auth: true # Enable API key auth
   api_key_env_var: API_KEY # Env var for API key
   enable_ip_pseudonymization: false # Hash IPs in logs
+  enable_prompt_secret_scan: false # Emit prompt_secret_scanner.py
+  permission_key: "__placeholder_permission" # Default claim key for permission_gate.py
+
+development:
+  type_checking: none # none | pyright | mypy — emits pyrightconfig.json when "pyright"
+
+enable_settings_module: false # Emit backend/config/settings.py (Pydantic-Settings)
+
+multi_tenancy:
+  enabled: false # Master switch for the tenancy stack
+  credential_provider: env # env | db
+  account_scoping_header: "X-Account-Id" # Header used to scope requests to a tenant
+  platform_db_assembled_dsn: true # Assemble per-tenant DSN from parts rather than a single URL
+
+stores: [] # List of StoreSpec blocks (see "Storage" section below)
 ```
 
 ## Optional features
@@ -230,7 +259,7 @@ The scaffolder exposes opt-in feature flags. All default to `none` / `False`, so
 
 ### `observability.structured_logging` (default: `false`)
 
-When enabled, generates `backend/observability/logging.py` using [structlog](https://www.structlog.org/) for JSON-structured logs, plus a companion smoke test at `backend/tests/test_structlog_setup.py`. The middleware is rewritten to use `clear_contextvars()` and structlog-native keyword logging. Recommended for production and Kubernetes deployments where log aggregators consume JSON.
+When enabled, generates `backend/observability/logging.py` using [structlog](https://www.structlog.org/) for JSON-structured logs, plus a companion smoke test at `backend/tests/test_structlog_setup.py`. The middleware is rewritten to use `clear_contextvars()` and structlog-native keyword logging. A `redact_secrets` processor is added to the structlog chain to strip sensitive values before emission. Recommended for production and Kubernetes deployments where log aggregators consume JSON.
 
 ### `workflow.router_llm_provider` (default: `"openai"`)
 
@@ -239,6 +268,105 @@ Selects the LLM provider used by `query_router_node.py` for intent classificatio
 ### `enable_provider_registry` (default: `false`)
 
 Generates `backend/config/provider_registry.py` and a sample `backend/config/providers.yaml` in the scaffolded project. The registry provides a generic abstraction for registering and looking up third-party data providers at runtime.
+
+### `enable_settings_module` (default: `false`)
+
+Generates `backend/config/settings.py` — a Pydantic-Settings module that loads all environment variables with type validation. Also generated automatically when `multi_tenancy.enabled` is `true` or when any `stores` are declared, since both features depend on environment-driven configuration.
+
+```yaml
+enable_settings_module: true
+```
+
+Generated file: `backend/config/settings.py`.
+
+### `security.enable_prompt_secret_scan` (default: `false`)
+
+Generates `backend/security/prompt_secret_scanner.py`, which provides a reusable scanner to detect accidental inclusion of secrets in LLM prompt strings before they leave the process. Wire it at any call site that builds prompts from user-supplied or environment-derived data.
+
+```yaml
+security:
+  enable_prompt_secret_scan: true
+```
+
+Generated file: `backend/security/prompt_secret_scanner.py`.
+
+### `security.permission_key` (default: `"__placeholder_permission"`)
+
+Sets the JWT claim key that `backend/middleware/permission_gate.py` inspects when enforcing endpoint-level permissions. Only relevant when `security.auth_type: jwt` (which gates generation of `permission_gate.py`). Change this to the actual claim name your identity provider issues (e.g., `"permissions"`, `"scope"`, `"roles"`).
+
+```yaml
+security:
+  auth_type: jwt
+  permission_key: "permissions"
+```
+
+Generated file: `backend/middleware/permission_gate.py` (gated on `auth_type == "jwt"`).
+
+### `development.type_checking` (default: `"none"`)
+
+Controls static type-checker tooling. Accepted values: `"none"`, `"pyright"`, `"mypy"`.
+
+Setting `"pyright"` generates a `pyrightconfig.json` at the project root with sensible defaults for the scaffolded layout. No extra file is generated for `"mypy"` — add your own `mypy.ini` as needed.
+
+```yaml
+development:
+  type_checking: pyright
+```
+
+Generated file: `pyrightconfig.json` (gated on `type_checking == "pyright"`).
+
+## Multi-tenancy
+
+Set `multi_tenancy.enabled: true` to scaffold a complete per-tenant isolation stack. The four components ship as a unit: enabling the flag generates all of them together.
+
+```yaml
+multi_tenancy:
+  enabled: true
+  credential_provider: db   # env (default) | db
+  account_scoping_header: "X-Account-Id"
+  platform_db_assembled_dsn: true
+```
+
+| Field | Default | Description |
+|-------|---------|-------------|
+| `enabled` | `false` | Master switch; gates all four generated files. |
+| `credential_provider` | `"env"` | `"env"` reads per-tenant credentials from environment variables; `"db"` fetches them from a credentials table, adding `platform_db.py`. |
+| `account_scoping_header` | `"X-Account-Id"` | HTTP header the middleware reads to identify the calling tenant. |
+| `platform_db_assembled_dsn` | `true` | When `true`, the platform DB DSN is assembled from `HOST`/`PORT`/`USER`/`PASS` parts rather than a single `DATABASE_URL`. |
+
+Generated files:
+
+| File | Condition |
+|------|-----------|
+| `backend/config/settings.py` | Always when `enabled` |
+| `backend/services/credential_provider.py` | Always when `enabled` |
+| `backend/services/platform_db.py` | `enabled` AND `credential_provider == "db"` |
+| `backend/middleware/account_gate.py` | Always when `enabled` |
+
+## Storage
+
+Declare one or more store modules with the `stores` list. Each entry is a `StoreSpec` that generates a dedicated service module.
+
+```yaml
+stores:
+  - name: audit_log
+    backends: [memory, bigquery]
+    default: bigquery
+```
+
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `name` | `SlugStr` | required | Snake-case identifier; becomes the filename stem (`{name}_store.py`). |
+| `backends` | `list` | `["memory"]` | One or more of `"memory"`, `"bigquery"`, `"postgres"`. |
+| `default` | `str` | `"memory"` | Which backend is active at runtime; must appear in `backends`. |
+
+Generated files:
+
+| File | Condition |
+|------|-----------|
+| `backend/services/{name}_store.py` | One file per `StoreSpec` entry |
+| `backend/services/bigquery_rest_client.py` | Any store includes `"bigquery"` in `backends` |
+| `backend/config/settings.py` | Any stores are declared (also triggered by `enable_settings_module` or `multi_tenancy.enabled`) |
 
 ## Database migrations (Alembic)
 
@@ -285,6 +413,17 @@ agentforge new --git-init
 
 A `Makefile` is always generated. Targets are conditional: `db-migrate` / `db-revision` appear only when `database.use_alembic: true`; `test-benchmarks` appears only when `testing.enable_benchmarks: true`. Run `make help` in the generated project to see active targets.
 
+The `run` target passes `--env-file .env` to the uvicorn invocation so that local environment variables are loaded automatically without a separate `source .env` step.
+
+## Secret scanning
+
+Two files are always generated regardless of other flags:
+
+- `.gitleaks.toml` — Gitleaks configuration with rule sets tuned for Python agentic projects (API keys, JWT secrets, DSN strings).
+- `.secretscanignore` — Per-file and per-pattern exclusions for the secret scanner, pre-populated with known-safe patterns such as example values and test fixtures.
+
+These files are intentional starting points. Extend them to match the secret patterns and exclusions relevant to your project.
+
 ## MCP client
 
 When any agent tool sets `mcp_resource`, agentforge generates `backend/services/mcp_client.py` using `langchain-mcp-adapters`. The client reads MCP server URLs from the `MCP_SERVERS` environment variable (JSON object).
@@ -328,7 +467,9 @@ security:
   jwt_audience: my-api
 ```
 
-Generated files: `backend/security/jwt.py`, `backend/security/dtos.py`, `backend/security/jwt_settings.py`, `backend/security/__init__.py`. The HS256 path adds `JWT_SECRET=` to `.env.example`; RS256 does not.
+Generated files: `backend/security/jwt.py`, `backend/security/dtos.py`, `backend/security/jwt_settings.py`, `backend/security/__init__.py`, `backend/middleware/permission_gate.py`. The HS256 path adds `JWT_SECRET=` to `.env.example`; RS256 does not.
+
+When `observability.structured_logging` is also enabled, `backend/security/jwt.py` binds `team_id`, `user_id`, and `request_id` as structlog context variables on every authenticated request, so these fields appear automatically in every downstream log line without manual threading.
 
 ## Memory / checkpointing
 
@@ -483,7 +624,7 @@ agents:
     llm_model: gpt-4o-mini
 ```
 
-Full example: `examples/campaign_health.yaml`
+Full example: `examples/assistant.yaml`
 
 #### `planner`
 
@@ -571,11 +712,11 @@ tools:
 
   # Agent tool — delegate to a sibling AgentForge service
   - kind: agent
-    name: campaign_health_check
-    description: Run the Campaign Health Score pipeline
-    service_url: https://example.com/campaign-health/
-    agent_key: campaign_scorer
-    auth_env_var: CAMPAIGN_HEALTH_SERVICE_JWT
+    name: analytics_check
+    description: Run the analytics pipeline for the selected account
+    service_url: https://example.com/analytics-service/
+    agent_key: analytics_scorer
+    auth_env_var: ANALYTICS_SERVICE_JWT
 ```
 
 See `docs/migration_v1_to_v2.md` for upgrading existing configs and

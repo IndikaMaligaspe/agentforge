@@ -8,7 +8,7 @@
 #   - entry.screen_context_fields     (UI context injection)
 #   - pattern: react                  (single-agent ReAct loop)
 #   - Single agent: copilot
-#   - agent-kind tool (calls campaign_health service via JWT)
+#   - agent-kind tool (calls analytics_service via JWT)
 #   - JWT auth: RS256, JWKS endpoint, issuer, audience
 
 metadata:
@@ -38,11 +38,11 @@ agents:
     system_prompt: You are a helpful co-pilot providing campaign insights.
     tools:
       - kind: agent
-        name: campaign_health_check
-        description: Run the Campaign Health Score pipeline for the selected account.
-        service_url: https://example.com/campaign-health/
-        agent_key: campaign_scorer
-        auth_env_var: CAMPAIGN_HEALTH_SERVICE_JWT
+        name: analytics_check
+        description: Run the analytics pipeline for the selected account.
+        service_url: https://example.com/analytics-service/
+        agent_key: analytics_scorer
+        auth_env_var: ANALYTICS_SERVICE_JWT
     needs_validation: false
     extra_return_keys: ["screen_context", "recommended_action"]
 

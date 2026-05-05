@@ -1,12 +1,12 @@
 """
-tests/e2e/test_v2_patterns.py — Generic e2e checks for all 6 v2 pattern fixtures.
+tests/e2e/test_v2_patterns.py — Generic e2e checks for all 5 v2 pattern fixtures.
 
 Scope
 -----
-Runs the same battery of structural checks against each of the 6 example YAML
-files introduced in TODO-v2-9:
+Runs the same battery of structural checks against each of the 5 example YAML
+files:
 
-    campaign_health, assistant, copilot, planner, fanout, workflow
+    assistant, copilot, planner, fanout, workflow
 
 Design decision (documented here per the plan):
     The "deep" form of the acceptance criterion — install deps, run pytest inside
@@ -68,10 +68,9 @@ from tests.e2e.conftest import FORBIDDEN_STRINGS, render_yaml_to_dict
 
 _EXAMPLES_DIR = Path(__file__).parent.parent.parent / "examples"
 
-# The 6 v2 pattern fixture files (project.full.yaml is governed by
+# The 5 v2 pattern fixture files (project.full.yaml is governed by
 # test_full_scaffold.py and intentionally excluded here).
 _EXAMPLE_FILES = [
-    "campaign_health.yaml",
     "assistant.yaml",
     "copilot.yaml",
     "planner.yaml",

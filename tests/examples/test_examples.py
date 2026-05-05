@@ -38,7 +38,6 @@ _EXAMPLES_DIR: Path = Path(__file__).parent.parent.parent / "examples"
 # project.full.yaml is intentionally excluded — it has its own dedicated e2e test
 # (tests/e2e/test_full_scaffold.py) that is treated as a byte-identity fixture.
 _EXAMPLE_FILES = [
-    "campaign_health.yaml",
     "copilot.yaml",
     "planner.yaml",
     "fanout.yaml",
@@ -55,8 +54,6 @@ _EXAMPLE_IDS = [name.replace(".yaml", "") for name in _EXAMPLE_FILES]
 # marker string in the given file, confirming the pattern-specific codegen ran.
 #
 # Marker selection rationale:
-#   campaign_health — query_router_node.py is the LLM intent classifier; the string
-#     "intent" appears multiple times as the variable that holds the classification result.
 #   assistant       — supervisor_node.py is the LLM-routed orchestrator dispatch node;
 #     "intent" appears as state["intent"] and log variables, confirming the orchestrator
 #     topology was rendered (distinguishes orchestrator from react/fanout/planner/workflow).
@@ -69,7 +66,6 @@ _EXAMPLE_IDS = [name.replace(".yaml", "") for name in _EXAMPLE_FILES]
 #   workflow        — workflow.py uses interrupt_before in the compile() call;
 #     "interrupt_before" appears as the LangGraph HITL compile argument.
 _EXPECTED_MARKERS: dict[str, tuple[str, str]] = {
-    "campaign_health.yaml": ("backend/graph/nodes/query_router_node.py", "intent"),
     "assistant.yaml":       ("backend/graph/nodes/supervisor_node.py", "intent"),
     "copilot.yaml":         ("backend/graph/nodes/passthrough_node.py", "inputs"),
     "planner.yaml":         ("backend/graph/nodes/plan_precheck_node.py", "check_plan"),

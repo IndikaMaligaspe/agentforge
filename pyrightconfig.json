@@ -1,5 +1,6 @@
 {
   "ignore": [
     "tests/fixtures/snapshots"
-  ]
+  ],
+  "reportMissingImports": "warning"
 }

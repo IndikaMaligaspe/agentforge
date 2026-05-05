@@ -29,19 +29,19 @@ tools; they are added to every agent created by `--agents`.
 
 ## Invocation Examples
 
-**Campaign Health Score** — rule-based orchestrator with an intent router,
+**Multi-agent Orchestrator** — rule-based orchestrator with an intent router,
 four agents, MCP and HTTP tools:
 
 ```bash
 agentforge init \
   --withIntentRouter \
   --withOrchestrator --orchestratorKind rule \
-  --agents campaign_scorer,insight_enricher,synthesizer,output_formatter \
-  --mcp fetch_campaign_metrics \
-  --http get_audience_insights
+  --agents scorer,enricher,synthesizer,formatter \
+  --mcp fetch_metrics \
+  --http get_insights
 ```
 
-Full fixture: `examples/campaign_health.yaml`
+Full fixture: `examples/copilot.yaml`
 
 **Co-pilot** — ReAct loop with passthrough entry, MCP and agent-call tools:
 
@@ -51,7 +51,7 @@ agentforge init \
   --withReactAgent \
   --agents copilot \
   --mcp get_ui_context \
-  --agent campaign_health_check
+  --agent analytics_check
 ```
 
 Full fixture: `examples/copilot.yaml`
