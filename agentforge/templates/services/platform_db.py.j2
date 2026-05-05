@@ -1,0 +1,81 @@
+"""Asyncpg pool helper for the platform/control-plane database.
+
+This module is emitted only when multi_tenancy.enabled=True AND
+multi_tenancy.credential_provider="db". It provides:
+
+  * get_platform_pool(dsn): singleton asyncpg pool, lazily initialized
+  * close_platform_pool(): cleanup hook for FastAPI lifespan shutdown
+  * _to_int_id(value, label): coerce JWT claim strings to int with a
+    clearer ValueError than asyncpg's cryptic TypeError
+
+The pool is module-level state. Tests that need to substitute it should
+call `close_platform_pool()` first to clear the singleton, then provide
+their own. The Settings.platform_db_url field (assembled via DSN parts
+or explicit env var) is the canonical source.
+"""
+
+from __future__ import annotations
+
+from typing import Optional
+
+import asyncpg
+
+_pool: Optional[asyncpg.Pool] = None
+
+
+async def get_platform_pool(dsn: str) -> asyncpg.Pool:
+    """Return a process-wide asyncpg pool, creating it on first call.
+
+    Subsequent calls return the same pool. Callers are expected to pass the
+    same DSN every time — the singleton intentionally does not re-key on
+    DSN, so changing the DSN at runtime is undefined behaviour. For tests
+    that need a different DSN, call `close_platform_pool()` first.
+    """
+    global _pool
+    if _pool is None:
+        _pool = await asyncpg.create_pool(dsn=dsn)
+    return _pool
+
+
+async def close_platform_pool() -> None:
+    """Close the platform pool if open. Safe to call multiple times.
+
+    Wire this into the FastAPI lifespan shutdown handler so the process
+    doesn't exit with open connections.
+    """
+    global _pool
+    if _pool is not None:
+        await _pool.close()
+        _pool = None
+
+
+def _to_int_id(value: str, label: str) -> int:
+    """Coerce a JWT claim string to int at the asyncpg boundary.
+
+    asyncpg raises a cryptic TypeError when bigint columns receive a
+    non-numeric str. This helper validates upfront and raises a clear
+    ValueError naming the offending claim, so the caller sees a useful
+    error in their logs.
+
+    Parameters
+    ----------
+    value:
+        The raw claim string (e.g. payload.get("user_id")).
+    label:
+        Human-readable name of the claim ("user_id", "team_id") for the
+        error message. Should match the claim key in the JWT for grep'ability.
+
+    Raises
+    ------
+    ValueError:
+        If `value` is not parseable as an int.
+    """
+    if value is None:
+        raise ValueError(f"{label} is None; expected a numeric string")
+    try:
+        return int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            f"{label}={value!r} is not a valid int; "
+            "platform DB tables expect bigint identifiers"
+        ) from exc

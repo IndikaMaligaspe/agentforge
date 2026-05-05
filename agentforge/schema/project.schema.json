@@ -501,6 +501,40 @@
       "title": "McpTool",
       "type": "object"
     },
+    "MultiTenancyConfig": {
+      "description": "Multi-tenancy configuration block.\n\nOff by default. When enabled, the scaffold emits:\n  - platform_db.py (asyncpg pool helper) \u2014 TODO-5.5\n  - credential_provider.py (Protocol + env/db impls + factory) \u2014 TODO-5.6\n  - account_gate.py (FastAPI dependency) \u2014 TODO-5.7\n  - settings.py (forced on) with platform-DB DSN assembly \u2014 TODO-5.4 / 5.8\n\nItems 1-4 must ship together as a unit; selecting `enabled=True` without\nthem produces a half-built scaffold. The umbrella flag prevents that.",
+      "properties": {
+        "enabled": {
+          "default": false,
+          "title": "Enabled",
+          "type": "boolean"
+        },
+        "credential_provider": {
+          "default": "env",
+          "description": "How tenant credentials are stored. 'env' reads from `.env` (Phase-1 single-tenant). 'db' uses an asyncpg connection to a platform DB with a per-tenant lookup.",
+          "enum": [
+            "env",
+            "db"
+          ],
+          "title": "Credential Provider",
+          "type": "string"
+        },
+        "account_scoping_header": {
+          "default": "X-Account-Id",
+          "description": "HTTP header that carries the active account id for tenant-scoped requests. The account_gate middleware reads this header and validates against the tenant's allowed accounts.",
+          "title": "Account Scoping Header",
+          "type": "string"
+        },
+        "platform_db_assembled_dsn": {
+          "default": true,
+          "description": "When True (default), Settings.platform_db_url is assembled from PLATFORM_DB_HOST/USER/PW/PORT/NAME parts (with URL-encoding). When False, the explicit PLATFORM_DB_URL env var must be set.",
+          "title": "Platform Db Assembled Dsn",
+          "type": "boolean"
+        }
+      },
+      "title": "MultiTenancyConfig",
+      "type": "object"
+    },
     "ObservabilityConfig": {
       "description": "Logging + tracing \u2192 observability/logging.py + tracing.py",
       "properties": {
@@ -953,7 +987,7 @@
       "type": "object"
     }
   },
-  "description": "Root model \u2014 the full project.yaml document.\n\nExample project.yaml:\n----------------------\nmetadata:\n  name: my_agent_api\n  description: My first agentic project\n  python_version: \"3.11\"\n\nagents:\n  - key: sql\n    class_name: SQLAgent\n    llm_model: gpt-4o-mini\n    tools:\n      - name: execute_sql\n        description: Run a SQL query against the database\n        mcp_resource: execute_sql\n    needs_validation: true\n\ndatabase:\n  backend: postgres\n  tables: [orders, customers, products]\n\nworkflow:\n  enable_feedback_loop: true\n  enable_validation_node: true\n  default_intent: sql\n  router_llm_provider: openai   # default; set \"anthropic\" to use ChatAnthropic\n\napi:\n  title: My Agentic API\n  query_max_length: 2000\n  cors:\n    origins: [\"http://localhost:3000\"]\n\nobservability:\n  enable_tracing: true\n  structured_logging: false     # default; set true to use structlog JSON logging\n\nsecurity:\n  auth_type: api_key\n  api_key_env_var: MY_API_KEY\n\nci:\n  provider: github              # default: none (opt-in)\n  python_version: \"3.12\"\n  installer: uv                 # uv | pip | poetry\n\ndevelopment:\n  pre_commit: true              # default: false (opt-in)\n\ntesting:\n  eval_framework: deepeval      # default: none (opt-in)\n  enable_benchmarks: true       # default: false (opt-in)\n\nenable_provider_registry: false  # default; set true to generate backend/config/provider_registry.py\n\n# v2 fields (optional \u2014 omitted in legacy configs):\nentry:\n  type: intent_router\npattern: orchestrator\norchestrator:\n  kind: llm",
+  "description": "Root model \u2014 the full project.yaml document.\n\nExample project.yaml:\n----------------------\nmetadata:\n  name: my_agent_api\n  description: My first agentic project\n  python_version: \"3.11\"\n\nagents:\n  - key: sql\n    class_name: SQLAgent\n    llm_model: gpt-4o-mini\n    tools:\n      - name: execute_sql\n        description: Run a SQL query against the database\n        mcp_resource: execute_sql\n    needs_validation: true\n\ndatabase:\n  backend: postgres\n  tables: [orders, customers, products]\n\nworkflow:\n  enable_feedback_loop: true\n  enable_validation_node: true\n  default_intent: sql\n  router_llm_provider: openai   # default; set \"anthropic\" to use ChatAnthropic\n\napi:\n  title: My Agentic API\n  query_max_length: 2000\n  cors:\n    origins: [\"http://localhost:3000\"]\n\nobservability:\n  enable_tracing: true\n  structured_logging: false     # default; set true to use structlog JSON logging\n\nsecurity:\n  auth_type: api_key\n  api_key_env_var: MY_API_KEY\n\nci:\n  provider: github              # default: none (opt-in)\n  python_version: \"3.12\"\n  installer: uv                 # uv | pip | poetry\n\ndevelopment:\n  pre_commit: true              # default: false (opt-in)\n\ntesting:\n  eval_framework: deepeval      # default: none (opt-in)\n  enable_benchmarks: true       # default: false (opt-in)\n\nenable_provider_registry: false  # default; set true to generate backend/config/provider_registry.py\nenable_settings_module: false    # default; set true to emit backend/config/settings.py\n\n# v2 fields (optional \u2014 omitted in legacy configs):\nentry:\n  type: intent_router\npattern: orchestrator\norchestrator:\n  kind: llm",
   "properties": {
     "entry": {
       "anyOf": [
@@ -1073,6 +1107,9 @@
     "security": {
       "$ref": "#/$defs/SecurityConfig"
     },
+    "multi_tenancy": {
+      "$ref": "#/$defs/MultiTenancyConfig"
+    },
     "ci": {
       "$ref": "#/$defs/CiConfig"
     },
@@ -1095,6 +1132,12 @@
       },
       "title": "Stores",
       "type": "array"
+    },
+    "enable_settings_module": {
+      "default": false,
+      "description": "Emit a typed Pydantic-Settings module at backend/config/settings.py with SecretStr-typed keys, .env auto-load, and empty-string-rejecting validators. Off by default to preserve existing scattered os.environ.get() patterns; opt in for projects adopting the new convention.",
+      "title": "Enable Settings Module",
+      "type": "boolean"
     }
   },
   "required": [
